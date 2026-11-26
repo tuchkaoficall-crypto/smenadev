@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}Дашборд - СМЕНА{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">
+    <i class="bi bi-speedometer2"></i> Дашборд
+</h1>
+
+<!-- Статистика -->
+<div class="row mb-4">
+    <!-- Пользователи -->
+    <div class="col-md-3 mb-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-people"></i> Пользователи
+                </h5>
+                <h2>{{ stats.users.total }}</h2>
+                <small>Работодателей: {{ stats.users.employers }}</small><br>
+                <small>Работников: {{ stats.users.workers }}</small>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Заказы -->
+    <div class="col-md-3 mb-3">
+        <div class="card bg-success text-white">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-clipboard-check"></i> Заказы
+                </h5>
+                <h2>{{ stats.orders.total }}</h2>
+                <small>На модерации: {{ stats.orders.pending }}</small><br>
+                <small>Активных: {{ stats.orders.active }}</small><br>
+                <small>Завершено: {{ stats.orders.completed }}</small>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Отклики -->
+    <div class="col-md-3 mb-3">
+        <div class="card bg-info text-white">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-hand-thumbs-up"></i> Отклики
+                </h5>
+                <h2>{{ stats.responses.total }}</h2>
+                <small>Ожидают: {{ stats.responses.pending }}</small>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Комиссия -->
+    <div class="col-md-3 mb-3">
+        <div class="card bg-warning text-dark">
+            <div class="card-body">
+                <h5 class="card-title">
+                    <i class="bi bi-currency-dollar"></i> Комиссия
+                </h5>
+                <h2>{{ "%.0f"|format(stats.commission) }} ₽</h2>
+                <small>Отзывов: {{ stats.reviews }}</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Уведомления -->
+{% if stats.employers.pending > 0 %}
+<div class="alert alert-warning">
+    <i class="bi bi-exclamation-triangle"></i>
+    <strong>Внимание!</strong> {{ stats.employers.pending }} работодателей ожидают проверки.
+    <a href="{{ url_for('employers.index', status='pending') }}" class="alert-link">Перейти к списку</a>
+</div>
+{% endif %}
+
+{% if stats.orders.pending > 0 %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle"></i>
+    <strong>Новые заказы!</strong> {{ stats.orders.pending }} заказов на модерации.
+    <a href="{{ url_for('orders.index', status='moderation') }}" class="alert-link">Перейти к списку</a>
+</div>
+{% endif %}
+
+<!-- Последние действия -->
+<div class="row">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="bi bi-clock-history"></i> Последние заказы</h5>
+            </div>
+            <div class="card-body">
+                <div class="list-group">
+                    {% for order in recent_orders %}
+                    <a href="{{ url_for('orders.detail', order_id=order.id) }}" class="list-group-item list-group-item-action">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1">Заказ #{{ order.id }} - {{ order.category }}</h6>
+                            <small>{{ order.created_at.strftime('%d.%m.%Y') }}</small>
+                        </div>
+                        <p class="mb-1"><small>{{ order.city }}, {{ order.employer.company_name }}</small></p>
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="bi bi-hand-thumbs-up"></i> Последние отклики</h5>
+            </div>
+            <div class="card-body">
+                <div class="list-group">
+                    {% for response in recent_responses %}
+                    <a href="{{ url_for('orders.detail', order_id=response.order_id) }}" class="list-group-item list-group-item-action">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h6 class="mb-1">{{ response.worker.user.full_name }}</h6>
+                            <small>{{ response.created_at.strftime('%d.%m.%Y') }}</small>
+                        </div>
+                        <p class="mb-1"><small>Заказ #{{ response.order_id }}</small></p>
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

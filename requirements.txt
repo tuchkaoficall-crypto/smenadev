@@ -1,0 +1,28 @@
+# Telegram Bot
+aiogram==3.4.1
+aiohttp==3.9.3
+python-dotenv==1.0.1
+
+# Database
+sqlalchemy==2.0.27
+asyncpg==0.29.0
+alembic==1.13.1
+psycopg2-binary==2.9.9
+
+# Admin Panel
+flask==3.0.2
+flask-login==0.6.3
+flask-sqlalchemy==3.1.1
+werkzeug==3.0.1
+gunicorn==21.2.0
+
+# Utilities
+python-dateutil==2.9.0
+pytz==2024.1
+pydantic>=2.4.1,<2.6
+
+# Development
+pytest==8.0.2
+pytest-asyncio==0.23.5
+black==24.2.0
+flake8==7.0.0
