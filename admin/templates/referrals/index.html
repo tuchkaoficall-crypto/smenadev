@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+
+{% block title %}Рефералы — СМЕНА{% endblock %}
+
+{% macro person(uid) -%}
+{%- set u = users.get(uid) -%}
+{%- if workers.get(uid) -%}<a href="{{ url_for('workers.detail', worker_id=workers[uid].id) }}" class="text-decoration-none">{{ u.full_name if u else uid }}</a> <span class="badge text-bg-light border">работник</span>
+{%- elif employers.get(uid) -%}<a href="{{ url_for('employers.detail', employer_id=employers[uid].id) }}" class="text-decoration-none">{{ employers[uid].company_name }}</a> <span class="badge text-bg-light border">работодатель</span>
+{%- else -%}{{ u.full_name if u else 'ID ' ~ uid }}{% if not u %} <span class="badge text-bg-light border">не завершил регистрацию</span>{% endif %}
+{%- endif -%}
+{%- if u and u.username %} <small class="text-body-secondary">@{{ u.username }}</small>{% endif %}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div><h1>Реферальная программа</h1>
+        <div class="sub">Пользователи приглашают друзей по ссылке из бота («🎁 Пригласить друга»). Бонус {{ bonus|money }}
+            начисляется, когда приглашённый выполнит первую смену или у работодателя завершится первый заказ.
+            Выплату отмечайте здесь.</div></div>
+    <a href="{{ url_for('referrals.export_csv', status=status or '') }}" class="btn btn-outline-secondary"><i class="bi bi-download"></i> Экспорт CSV</a>
+</div>
+
+<div class="kpi-grid">
+    {{ m.kpi('bi-people', 'Пришли по ссылкам', stats.total, None, None, 'primary') }}
+    {{ m.kpi('bi-person-check', 'Стали активными', stats.qualified, ((stats.qualified / stats.total * 100)|round|int ~ '% конверсия') if stats.total else None, None, 'success') }}
+    {{ m.kpi('bi-hourglass-split', 'К выплате', stats.to_pay|money, None, None, 'warning') }}
+    {{ m.kpi('bi-cash-coin', 'Выплачено', stats.paid|money, None, None, 'info') }}
+</div>
+
+<div class="row g-4">
+    <div class="col-xl-9">
+        <div class="card">
+            <div class="card-header d-flex gap-2 flex-wrap align-items-center">
+                <a class="btn btn-sm {{ 'btn-primary' if not status else 'btn-outline-secondary' }}" href="{{ url_for('referrals.index') }}">Все</a>
+                {% for k, n in statuses.items() %}
+                <a class="btn btn-sm {{ 'btn-primary' if status == k else 'btn-outline-secondary' }}" href="{{ url_for('referrals.index', status=k) }}">{{ n }}</a>
+                {% endfor %}
+            </div>
+            {% if refs %}
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th class="ps-3">Пригласил</th><th>Приглашён</th><th>Дата</th><th>Статус</th><th class="text-end">Бонус</th><th class="text-end pe-3"></th></tr></thead>
+                    <tbody>
+                    {% for r in refs %}
+                    <tr>
+                        <td class="ps-3 small">{{ person(r.referrer_id) }}</td>
+                        <td class="small">{{ person(r.referred_id) }}</td>
+                        <td class="small text-nowrap">{{ r.created_at|dt('%d.%m.%Y') }}</td>
+                        <td><span class="badge rounded-pill text-bg-{{ {'invited': 'secondary', 'qualified': 'warning', 'paid': 'success', 'rejected': 'danger'}.get(r.status, 'secondary') }}">{{ statuses.get(r.status, r.status) }}</span>
+                            {% if r.comment %}<div class="small text-body-secondary">{{ r.comment }}</div>{% endif %}</td>
+                        <td class="text-end num">{{ r.bonus_amount|money if r.bonus_amount else '—' }}</td>
+                        <td class="text-end pe-3 text-nowrap">
+                            {% if r.status == 'qualified' %}
+                            <form method="POST" action="{{ url_for('referrals.set_status', ref_id=r.id, status='paid') }}" class="d-inline" data-confirm="Отметить бонус {{ r.bonus_amount|money }} выплаченным? Пользователь получит уведомление.">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="next" value="{{ request.full_path }}">
+                                <button class="btn btn-sm btn-success"><i class="bi bi-cash"></i> Выплачен</button>
+                            </form>
+                            {% endif %}
+                            {% if r.status in ['invited', 'qualified'] %}
+                            <form method="POST" action="{{ url_for('referrals.set_status', ref_id=r.id, status='rejected') }}" class="d-inline" data-confirm="Отклонить реферала (например, накрутка)?">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="next" value="{{ request.full_path }}">
+                                <input type="hidden" name="comment" value="Отклонён администратором">
+                                <button class="btn btn-sm btn-outline-danger" title="Отклонить"><i class="bi bi-x-lg"></i></button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty"><i class="bi bi-gift"></i>Приглашений пока нет</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-xl-3">
+        <div class="card">
+            <div class="card-header"><i class="bi bi-trophy me-1"></i> Топ пригласивших</div>
+            <ul class="list-group list-group-flush small">
+                {% for uid, items in stats.top %}
+                <li class="list-group-item d-flex justify-content-between">
+                    <span>{{ person(uid) }}</span>
+                    <span class="text-nowrap num">{{ items|selectattr('status', 'in', ['qualified', 'paid'])|list|length }} / {{ items|length }}</span>
+                </li>
+                {% else %}
+                <li class="list-group-item text-body-secondary">Пока пусто</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,39 @@
+<div class="card mb-4" id="documents">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-person-vcard me-1"></i> Документы ({{ documents|length }})</span>
+        {% if worker.verified_at %}
+        <form method="POST" action="{{ url_for('workers.unverify', worker_id=worker.id) }}" data-confirm="Снять отметку «документы проверены»?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-sm btn-link p-0 text-decoration-none">снять проверку</button>
+        </form>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% if worker.verified_at %}<p class="small mb-2"><i class="bi bi-patch-check-fill text-primary"></i> Паспорт проверен {{ worker.verified_at|dt('%d.%m.%Y') }}</p>{% endif %}
+        {% for d in documents %}
+        <div class="border rounded p-2 mb-2 small">
+            <div class="d-flex justify-content-between">
+                <strong>{{ DOCUMENT_TYPES.get(d.doc_type, d.doc_type) }}</strong>
+                <span class="badge rounded-pill text-bg-{{ {'pending': 'warning', 'approved': 'success', 'rejected': 'danger'}.get(d.status, 'secondary') }}">{{ DOCUMENT_STATUS_NAMES.get(d.status, d.status) }}</span>
+            </div>
+            <div class="text-body-secondary">{{ d.created_at|dt }}{% if d.reviewed_by %} · проверил {{ d.reviewed_by }}{% endif %}{% if d.reject_reason %} · {{ d.reject_reason }}{% endif %}</div>
+            <a href="{{ url_for('workers.document_file', doc_id=d.id) }}" target="_blank" rel="noopener"><i class="bi bi-eye"></i> Открыть файл</a>
+            {% if d.status == 'pending' %}
+            <div class="d-flex gap-2 mt-2">
+                <form method="POST" action="{{ url_for('workers.document_review', doc_id=d.id, action='approve') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-success"><i class="bi bi-check-lg"></i> Подтвердить</button>
+                </form>
+                <form method="POST" action="{{ url_for('workers.document_review', doc_id=d.id, action='reject') }}" class="d-flex gap-1 flex-grow-1">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="text" name="reason" class="form-control form-control-sm" placeholder="Причина отказа" maxlength="300">
+                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-x-lg"></i></button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+        {% else %}
+        <p class="small text-body-secondary mb-0">Работник ещё не загружал документы. Загрузить можно в боте: «👤 Мой профиль» → «🪪 Подтвердить документы».</p>
+        {% endfor %}
+    </div>
+</div>

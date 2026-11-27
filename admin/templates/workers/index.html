@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+
+{% block title %}Работники — СМЕНА{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div><h1>Работники</h1><div class="sub">Найдено {{ total }}</div></div>
+    <a href="{{ url_for('workers.export_csv', **args) }}" class="btn btn-outline-secondary"><i class="bi bi-download"></i> Экспорт CSV</a>
+</div>
+
+<div class="card mb-3"><div class="card-body">
+    <form class="filter-bar auto-submit" method="get">
+        <div class="flex-grow-1">
+            <label class="form-label small text-body-secondary mb-1">Поиск</label>
+            <input type="search" class="form-control" name="q" value="{{ args.get('q', '') }}" placeholder="Имя, @username, телефон, Telegram ID">
+        </div>
+        <div>
+            <label class="form-label small text-body-secondary mb-1">Город</label>
+            <select class="form-select" name="city"><option value="">Все</option>
+                {% for c in cities %}<option {% if city == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+        </div>
+        <div>
+            <label class="form-label small text-body-secondary mb-1">Категория</label>
+            <select class="form-select" name="category"><option value="">Все</option>
+                {% for c in categories %}<option {% if args.get('category') == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+        </div>
+        <div>
+            <label class="form-label small text-body-secondary mb-1">Рейтинг от</label>
+            <select class="form-select" name="min_rating"><option value="">Любой</option>
+                {% for r in ['3', '4', '4.5'] %}<option value="{{ r }}" {% if args.get('min_rating') == r %}selected{% endif %}>{{ r }}★</option>{% endfor %}</select>
+        </div>
+        <div>
+            <label class="form-label small text-body-secondary mb-1">Статус</label>
+            <select class="form-select" name="blocked"><option value="">Все</option>
+                <option value="0" {% if args.get('blocked') == '0' %}selected{% endif %}>Активные</option>
+                <option value="1" {% if args.get('blocked') == '1' %}selected{% endif %}>Заблокированные</option></select>
+        </div>
+        <div>
+            <label class="form-label small text-body-secondary mb-1">Надёжность</label>
+            <select class="form-select" name="reliability"><option value="">Любая</option>
+                {% for k, n in [('priority','⚡ Приоритетные'),('good','🟢 Надёжные'),('warn','🟡 Есть замечания'),('low','🔴 Низкая'),('restricted','⛔ Ограничены')] %}
+                <option value="{{ k }}" {% if args.get('reliability') == k %}selected{% endif %}>{{ n }}</option>{% endfor %}</select>
+        </div>
+        <div>
+            <label class="form-label small text-body-secondary mb-1">Документы</label>
+            <select class="form-select" name="verified"><option value="">Все</option>
+                <option value="1" {% if args.get('verified') == '1' %}selected{% endif %}>Проверены</option>
+                <option value="0" {% if args.get('verified') == '0' %}selected{% endif %}>Не проверены</option></select>
+        </div>
+        <div>
+            <label class="form-label small text-body-secondary mb-1">Сортировка</label>
+            <select class="form-select" name="sort">
+                {% for k, n in [('rating','По рейтингу'),('shifts','По сменам'),('new','Новые')] %}
+                <option value="{{ k }}" {% if args.get('sort', 'rating') == k %}selected{% endif %}>{{ n }}</option>{% endfor %}
+            </select>
+        </div>
+        <button class="btn btn-primary"><i class="bi bi-funnel"></i></button>
+        {% if args %}<a class="btn btn-link" href="{{ url_for('workers.index') }}">Сбросить</a>{% endif %}
+    </form>
+</div></div>
+
+<div class="card">
+    {% if workers %}
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead><tr><th class="ps-3">Работник</th><th>Телефон</th><th>Город</th><th>Категории</th><th>Рейтинг</th><th>Надёжность</th><th class="text-end">Смен</th><th>Регистрация</th></tr></thead>
+            <tbody>
+            {% for w in workers %}
+            <tr data-href="{{ url_for('workers.detail', worker_id=w.id) }}">
+                <td class="ps-3">
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="avatar">{{ (w.user.first_name or '?')[:1] if w.user else '?' }}</span>
+                        <div>
+                            <a href="{{ url_for('workers.detail', worker_id=w.id) }}" class="fw-semibold text-decoration-none">{{ w.user.full_name if w.user else w.user_id }}</a>
+                            {% if w.user and w.user.is_blocked %}<span class="badge text-bg-dark">бан</span>{% endif %}
+                            {% if w.verified_at %}<i class="bi bi-patch-check-fill text-primary" title="Документы проверены"></i>{% endif %}
+                            {% if w.user and w.user.username %}<div class="small text-body-secondary">@{{ w.user.username }}</div>{% endif %}
+                        </div>
+                    </div>
+                </td>
+                <td class="small">{{ w.user.phone if w.user and w.user.phone else '—' }}</td>
+                <td class="small">{{ w.city }}</td>
+                <td class="small">{{ cats[w.id]|join(', ') if cats[w.id] else 'Любая работа' }}</td>
+                <td>{% if w.total_reviews %}{{ m.stars(w.rating) }} <small class="num">{{ '%.1f'|format(w.rating) }} ({{ w.total_reviews }})</small>{% else %}<small class="text-body-secondary">нет оценок</small>{% endif %}</td>
+                <td>{% set r = rel[w.id] %}<span class="badge rounded-pill text-bg-{{ r.level.color }}">{{ r.level.label }}{% if r.points %} · {{ r.points }} б.{% endif %}</span>
+                    {% if r.priority %}<span class="badge rounded-pill text-bg-light border" title="Получает вакансии первым">⚡</span>{% endif %}</td>
+                <td class="text-end num">{{ w.completed_shifts }}</td>
+                <td class="small">{{ w.created_at|dt('%d.%m.%Y') }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty"><i class="bi bi-people"></i>Работники не найдены</div>
+    {% endif %}
+</div>
+{{ m.pagination('workers.index', page, total_pages, args) }}
+{% endblock %}

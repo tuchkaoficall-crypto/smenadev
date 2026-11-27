@@ -19,6 +19,9 @@ class Order(Base):
     # Информация о работе
     city = Column(String(100), nullable=False)
     address = Column(String(500), nullable=False)
+    # Точка на карте для проверки отметки «я на месте» (необязательно, добавлено 27.11.2026)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     shift_date = Column(DateTime, nullable=False)
     shift_duration = Column(Integer, nullable=False)  # В часах
     workers_needed = Column(Integer, nullable=False)
@@ -48,11 +51,15 @@ class Order(Base):
     closed_at = Column(DateTime, nullable=True)
     
     # Relationships
-    employer = relationship("Employer", backref="orders", foreign_keys=[employer_id])
+    employer = relationship("Employer", backref="orders", foreign_keys=[employer_id], lazy="selectin")
     
     def __repr__(self):
         return f"<Order #{self.id}: {self.category} in {self.city} ({self.status})>"
     
+    @property
+    def has_point(self):
+        return self.latitude is not None and self.longitude is not None
+
     @property
     def payment_display(self):
         """Отображение оплаты"""
@@ -61,7 +68,14 @@ class Order(Base):
         return f"{self.payment_amount:.0f} ₽ в час"
     
     @property
+    def shift_amount(self):
+        """Оплата одному работнику за всю смену (с учётом почасовой оплаты)"""
+        if self.payment_type == "per_hour":
+            return self.payment_amount * (self.shift_duration or 0)
+        return self.payment_amount
+
+    @property
     def total_cost(self):
-        """Общая стоимость для работодателя"""
-        worker_payment = self.payment_amount * self.workers_needed
-        return worker_payment + self.commission
+        """Общая стоимость для работодателя (оплата всем работникам + комиссия за заявку)"""
+        worker_payment = self.shift_amount * self.workers_needed
+        return worker_payment + (self.commission or 0)

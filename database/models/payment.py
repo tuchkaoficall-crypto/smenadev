@@ -37,7 +37,7 @@ class Payment(Base):
     paid_at = Column(DateTime, nullable=True)
     
     # Relationships
-    order = relationship("Order", backref="payments", foreign_keys=[order_id])
+    order = relationship("Order", backref="payments", foreign_keys=[order_id], lazy="selectin")
     
     def __repr__(self):
         return f"<Payment {self.id}: {self.payment_type} {self.amount}₽ ({self.status})>"

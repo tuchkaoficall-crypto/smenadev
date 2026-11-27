@@ -1,129 +1,253 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m with context %}
 
-{% block title %}Дашборд - СМЕНА{% endblock %}
+{% block title %}Дашборд — СМЕНА{% endblock %}
 
 {% block content %}
-<h1 class="mb-4">
-    <i class="bi bi-speedometer2"></i> Дашборд
-</h1>
+<div class="page-head">
+    <div>
+        <h1>Дашборд</h1>
+        <div class="sub">Сводка по сервису за {{ periods[days]|lower }}, сравнение с предыдущим периодом</div>
+    </div>
+    <div class="chips mb-0">
+        {% for d, name in periods.items() %}
+        <a class="chip {% if d == days %}active{% endif %}" href="{{ url_for('dashboard.index', days=d) }}">{{ name }}</a>
+        {% endfor %}
+    </div>
+</div>
 
-<!-- Статистика -->
-<div class="row mb-4">
-    <!-- Пользователи -->
-    <div class="col-md-3 mb-3">
-        <div class="card bg-primary text-white">
-            <div class="card-body">
-                <h5 class="card-title">
-                    <i class="bi bi-people"></i> Пользователи
-                </h5>
-                <h2>{{ stats.users.total }}</h2>
-                <small>Работодателей: {{ stats.users.employers }}</small><br>
-                <small>Работников: {{ stats.users.workers }}</small>
+<div class="kpi-grid six">
+    {{ m.kpi('bi-cash-stack', 'Оборот (ФОТ заказов)', kpi.gmv|money, 'средний заказ ' ~ (kpi.avg_check|money), kpi.gmv_delta, 'primary') }}
+    {{ m.kpi('bi-piggy-bank', 'Заработано комиссии', kpi.earned|money, 'за всё время ' ~ (kpi.earned_total|money), kpi.earned_delta, 'success') }}
+    {{ m.kpi('bi-hourglass-split', 'Комиссия в работе', kpi.pipeline|money, 'по активным заказам', None, 'purple') }}
+    {{ m.kpi('bi-clipboard-check', 'Новых заказов', kpi.orders, 'отмен ' ~ (kpi.cancel_rate if kpi.cancel_rate is not none else '—') ~ '%', kpi.orders_delta, 'info') }}
+    {{ m.kpi('bi-people', 'Заполняемость смен', (kpi.fill_rate ~ '%') if kpi.fill_rate is not none else '—', 'подтверждено / требовалось', None, 'warning') }}
+    {{ m.kpi('bi-credit-card', 'Ожидает оплаты', kpi.pending_payments|money, kpi.pending_payments_count ~ ' платежей · получено ' ~ (kpi.received|money), None, 'danger') }}
+</div>
+
+<!-- Требует внимания -->
+<div class="card mb-4">
+    <div class="card-header"><i class="bi bi-lightning-charge me-1"></i> Требует внимания</div>
+    <div class="card-body">
+        <div class="attention-grid">
+            <a class="attention-item {% if attention.employers_pending %}hot{% endif %}" href="{{ url_for('moderation.index') }}#employers">
+                <div class="num">{{ attention.employers_pending }}</div><div class="lbl">анкет работодателей на проверке</div></a>
+            <a class="attention-item {% if attention.orders_moderation %}hot{% endif %}" href="{{ url_for('moderation.index') }}#orders">
+                <div class="num">{{ attention.orders_moderation }}</div><div class="lbl">заявок на модерации</div></a>
+            <a class="attention-item {% if attention.responses_pending %}hot{% endif %}" href="{{ url_for('moderation.index') }}#responses">
+                <div class="num">{{ attention.responses_pending }}</div><div class="lbl">откликов ждут решения</div></a>
+            <a class="attention-item" href="{{ url_for('orders.index', status='active', sort='shift') }}">
+                <div class="num">{{ attention.shifts_today|length }}</div><div class="lbl">смен сегодня</div></a>
+            <a class="attention-item {% if attention.understaffed %}hot{% endif %}" href="{{ url_for('orders.index', status='search_workers', sort='shift') }}">
+                <div class="num">{{ attention.understaffed|length }}</div><div class="lbl">недобор на смены в ближайшие 48 ч</div></a>
+            <a class="attention-item {% if attention.overdue %}hot{% endif %}" href="{{ url_for('orders.index', status='active', sort='shift') }}">
+                <div class="num">{{ attention.overdue|length }}</div><div class="lbl">смен прошли, но не закрыты</div></a>
+        </div>
+        {% if attention.overdue or attention.understaffed %}
+        <div class="mt-3 small">
+            {% for o in (attention.overdue + attention.understaffed)[:6] %}
+            <a href="{{ url_for('orders.detail', order_id=o.id) }}" class="me-3 text-decoration-none">
+                <i class="bi bi-exclamation-circle text-danger"></i> #{{ o.id }} {{ o.category }}, {{ o.shift_date|dt('%d.%m %H:%M') }}</a>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-xl-8">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-graph-up-arrow me-1"></i> Оборот и комиссия по дням</span>
+                <small class="text-body-secondary">столбцы — заказы</small>
             </div>
+            <div class="card-body"><div class="chart-box"><canvas id="trendChart"></canvas></div></div>
         </div>
     </div>
-    
-    <!-- Заказы -->
-    <div class="col-md-3 mb-3">
-        <div class="card bg-success text-white">
+    <div class="col-xl-4">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-funnel me-1"></i> Заказы по статусам</div>
             <div class="card-body">
-                <h5 class="card-title">
-                    <i class="bi bi-clipboard-check"></i> Заказы
-                </h5>
-                <h2>{{ stats.orders.total }}</h2>
-                <small>На модерации: {{ stats.orders.pending }}</small><br>
-                <small>Активных: {{ stats.orders.active }}</small><br>
-                <small>Завершено: {{ stats.orders.completed }}</small>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Отклики -->
-    <div class="col-md-3 mb-3">
-        <div class="card bg-info text-white">
-            <div class="card-body">
-                <h5 class="card-title">
-                    <i class="bi bi-hand-thumbs-up"></i> Отклики
-                </h5>
-                <h2>{{ stats.responses.total }}</h2>
-                <small>Ожидают: {{ stats.responses.pending }}</small>
-            </div>
-        </div>
-    </div>
-    
-    <!-- Комиссия -->
-    <div class="col-md-3 mb-3">
-        <div class="card bg-warning text-dark">
-            <div class="card-body">
-                <h5 class="card-title">
-                    <i class="bi bi-currency-dollar"></i> Комиссия
-                </h5>
-                <h2>{{ "%.0f"|format(stats.commission) }} ₽</h2>
-                <small>Отзывов: {{ stats.reviews }}</small>
+                {% set ftotal = funnel|sum(attribute='count') %}
+                {% if ftotal %}
+                <div class="chart-box"><canvas id="statusChart"></canvas></div>
+                {% else %}
+                <div class="empty"><i class="bi bi-inbox"></i>Заказов пока нет</div>
+                {% endif %}
             </div>
         </div>
     </div>
 </div>
 
-<!-- Уведомления -->
-{% if stats.employers.pending > 0 %}
-<div class="alert alert-warning">
-    <i class="bi bi-exclamation-triangle"></i>
-    <strong>Внимание!</strong> {{ stats.employers.pending }} работодателей ожидают проверки.
-    <a href="{{ url_for('employers.index', status='pending') }}" class="alert-link">Перейти к списку</a>
-</div>
-{% endif %}
-
-{% if stats.orders.pending > 0 %}
-<div class="alert alert-info">
-    <i class="bi bi-info-circle"></i>
-    <strong>Новые заказы!</strong> {{ stats.orders.pending }} заказов на модерации.
-    <a href="{{ url_for('orders.index', status='moderation') }}" class="alert-link">Перейти к списку</a>
-</div>
-{% endif %}
-
-<!-- Последние действия -->
-<div class="row">
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5><i class="bi bi-clock-history"></i> Последние заказы</h5>
-            </div>
+<div class="row g-4 mb-4">
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-tags me-1"></i> Популярные категории</div>
             <div class="card-body">
-                <div class="list-group">
-                    {% for order in recent_orders %}
-                    <a href="{{ url_for('orders.detail', order_id=order.id) }}" class="list-group-item list-group-item-action">
-                        <div class="d-flex w-100 justify-content-between">
-                            <h6 class="mb-1">Заказ #{{ order.id }} - {{ order.category }}</h6>
-                            <small>{{ order.created_at.strftime('%d.%m.%Y') }}</small>
-                        </div>
-                        <p class="mb-1"><small>{{ order.city }}, {{ order.employer.company_name }}</small></p>
-                    </a>
-                    {% endfor %}
+                {% if categories %}
+                {% set maxc = categories[0][1] %}
+                {% for name, cnt in categories %}
+                <div class="mb-2">
+                    <div class="d-flex justify-content-between small"><span>{{ name }}</span><span class="num fw-semibold">{{ cnt }}</span></div>
+                    <div class="progress progress-thin"><div class="progress-bar" style="width: {{ (cnt / maxc * 100)|round }}%"></div></div>
                 </div>
+                {% endfor %}
+                {% else %}<div class="empty"><i class="bi bi-tags"></i>Нет заказов за период</div>{% endif %}
             </div>
         </div>
     </div>
-    
-    <div class="col-md-6">
-        <div class="card">
-            <div class="card-header">
-                <h5><i class="bi bi-hand-thumbs-up"></i> Последние отклики</h5>
-            </div>
-            <div class="card-body">
-                <div class="list-group">
-                    {% for response in recent_responses %}
-                    <a href="{{ url_for('orders.detail', order_id=response.order_id) }}" class="list-group-item list-group-item-action">
-                        <div class="d-flex w-100 justify-content-between">
-                            <h6 class="mb-1">{{ response.worker.user.full_name }}</h6>
-                            <small>{{ response.created_at.strftime('%d.%m.%Y') }}</small>
-                        </div>
-                        <p class="mb-1"><small>Заказ #{{ response.order_id }}</small></p>
-                    </a>
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-trophy me-1"></i> Топ работодателей за период</div>
+            <div class="card-body p-0">
+                {% if top_employers %}
+                <table class="table table-sm align-middle">
+                    <thead><tr><th class="ps-3">Компания</th><th class="text-end">Заказов</th><th class="text-end pe-3">Оборот</th></tr></thead>
+                    <tbody>
+                    {% for e in top_employers %}
+                    <tr data-href="{{ url_for('employers.detail', employer_id=e.employer.id) }}">
+                        <td class="ps-3">{{ e.employer.company_name }}</td>
+                        <td class="text-end num">{{ e.orders }}</td>
+                        <td class="text-end num pe-3">{{ e.gmv|money }}</td>
+                    </tr>
                     {% endfor %}
-                </div>
+                    </tbody>
+                </table>
+                {% else %}<div class="empty"><i class="bi bi-building"></i>Нет данных</div>{% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-award me-1"></i> Лучшие работники</div>
+            <div class="card-body p-0">
+                {% if top_workers %}
+                <table class="table table-sm align-middle">
+                    <thead><tr><th class="ps-3">Работник</th><th class="text-end">Смен</th><th class="text-end pe-3">Рейтинг</th></tr></thead>
+                    <tbody>
+                    {% for w in top_workers %}
+                    <tr data-href="{{ url_for('workers.detail', worker_id=w.id) }}">
+                        <td class="ps-3">{{ w.user.full_name if w.user else w.user_id }}</td>
+                        <td class="text-end num">{{ w.completed_shifts }}</td>
+                        <td class="text-end pe-3">{% if w.total_reviews %}<i class="bi bi-star-fill text-warning"></i> {{ '%.1f'|format(w.rating) }}{% else %}—{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}<div class="empty"><i class="bi bi-person-badge"></i>Пока нет завершённых смен</div>{% endif %}
             </div>
         </div>
     </div>
 </div>
+
+<div class="row g-4">
+    <div class="col-lg-7">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between">
+                <span><i class="bi bi-clock-history me-1"></i> Последние заказы</span>
+                <a href="{{ url_for('orders.index') }}" class="small">все заказы</a>
+            </div>
+            <div class="card-body p-0">
+                {% if recent_orders %}
+                <table class="table table-hover align-middle">
+                    <tbody>
+                    {% for o in recent_orders %}
+                    <tr data-href="{{ url_for('orders.detail', order_id=o.id) }}">
+                        <td class="ps-3 text-body-secondary">#{{ o.id }}</td>
+                        <td><div class="fw-semibold">{{ o.category }}</div><small class="text-body-secondary">{{ o.employer.company_name if o.employer else '—' }}</small></td>
+                        <td class="small">{{ o.shift_date|dt('%d.%m %H:%M') }}</td>
+                        <td>{{ m.order_badge(o.status) }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}<div class="empty"><i class="bi bi-inbox"></i>Заказов пока нет</div>{% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-5">
+        <div class="card h-100">
+            <div class="card-header d-flex justify-content-between">
+                <span><i class="bi bi-people me-1"></i> Аудитория и активность</span>
+                <a href="{{ url_for('audit.index') }}" class="small">журнал</a>
+            </div>
+            <div class="card-body">
+                <div class="row text-center g-2 mb-3">
+                    <div class="col"><div class="fs-5 fw-bold">{{ users.total }}</div><small class="text-body-secondary">пользователей</small></div>
+                    <div class="col"><div class="fs-5 fw-bold">{{ users.workers }}</div><small class="text-body-secondary">работников</small></div>
+                    <div class="col"><div class="fs-5 fw-bold">{{ users.employers }}</div><small class="text-body-secondary">работодателей</small></div>
+                    <div class="col"><div class="fs-5 fw-bold text-success">+{{ users.new }}</div><small class="text-body-secondary">новых</small></div>
+                </div>
+                {% if recent_actions %}
+                <ul class="timeline">
+                    {% for a in recent_actions %}
+                    <li class="{{ 'note' if a.action == 'note' else '' }}">
+                        <div class="tl-head"><strong class="small">{{ ACTION_NAMES.get(a.action, a.action) }}</strong>
+                            <small class="text-body-secondary">{{ a.created_at|dt('%d.%m %H:%M') }}</small></div>
+                        {% if a.summary %}<div class="tl-body text-body-secondary small">{% if a.entity_type == 'order' %}#{{ a.entity_id }} · {% endif %}{{ a.summary|truncate(80) }}</div>{% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% else %}<p class="text-body-secondary small mb-0">Действия администраторов появятся здесь.</p>{% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    const series = {{ series|tojson }};
+    const funnel = {{ funnel|tojson }};
+    const palette = {primary:'#4f46e5', secondary:'#94a3b8', success:'#10b981', danger:'#ef4444', warning:'#f59e0b',
+                     info:'#0ea5e9', orange:'#f97316', purple:'#8b5cf6', teal:'#14b8a6', dark:'#334155'};
+    const rub = v => new Intl.NumberFormat('ru-RU').format(v) + ' ₽';
+    let charts = [];
+
+    function draw() {
+        charts.forEach(c => c.destroy()); charts = [];
+        const dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+        Chart.defaults.color = dark ? '#9aa3b2' : '#6b7280';
+        Chart.defaults.borderColor = dark ? '#262d3b' : '#eef0f5';
+        Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+
+        const trend = document.getElementById('trendChart');
+        if (trend) charts.push(new Chart(trend, {
+            data: {
+                labels: series.labels,
+                datasets: [
+                    {type: 'line', label: 'Оборот', data: series.gmv, borderColor: '#4f46e5', backgroundColor: 'rgba(79,70,229,.12)',
+                     fill: true, cubicInterpolationMode: 'monotone', pointRadius: 0, yAxisID: 'y'},
+                    {type: 'line', label: 'Комиссия', data: series.commission, borderColor: '#10b981', cubicInterpolationMode: 'monotone', pointRadius: 0, yAxisID: 'y'},
+                    {type: 'bar', label: 'Заказы', data: series.orders, backgroundColor: 'rgba(148,163,184,.35)', borderRadius: 4, yAxisID: 'y1'}
+                ]
+            },
+            options: {
+                maintainAspectRatio: false, interaction: {mode: 'index', intersect: false},
+                plugins: {legend: {position: 'bottom', labels: {usePointStyle: true, boxWidth: 8}},
+                          tooltip: {callbacks: {label: c => c.dataset.yAxisID === 'y1' ? `${c.dataset.label}: ${c.raw}` : `${c.dataset.label}: ${rub(c.raw)}`}}},
+                scales: {x: {grid: {display: false}, ticks: {maxTicksLimit: 10}},
+                         y: {beginAtZero: true, ticks: {callback: v => new Intl.NumberFormat('ru-RU', {notation: 'compact'}).format(v)}},
+                         y1: {beginAtZero: true, position: 'right', grid: {display: false}, ticks: {precision: 0}}}
+            }
+        }));
+
+        const st = document.getElementById('statusChart');
+        if (st) {
+            const items = funnel.filter(f => f.count > 0);
+            charts.push(new Chart(st, {
+                type: 'doughnut',
+                data: {labels: items.map(f => f.name), datasets: [{data: items.map(f => f.count),
+                       backgroundColor: items.map(f => palette[f.color] || '#94a3b8'), borderWidth: 0}]},
+                options: {maintainAspectRatio: false, cutout: '68%',
+                          plugins: {legend: {position: 'bottom', labels: {usePointStyle: true, boxWidth: 8, font: {size: 11}}}}}
+            }));
+        }
+    }
+    draw();
+    document.addEventListener('themechange', draw);
+})();
+</script>
 {% endblock %}

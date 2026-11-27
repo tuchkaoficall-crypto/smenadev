@@ -30,8 +30,8 @@ class Response(Base):
     completed_at = Column(DateTime, nullable=True)
     
     # Relationships
-    order = relationship("Order", backref="responses", foreign_keys=[order_id])
-    worker = relationship("Worker", backref="responses", foreign_keys=[worker_id])
+    order = relationship("Order", backref="responses", foreign_keys=[order_id], lazy="selectin")
+    worker = relationship("Worker", backref="responses", foreign_keys=[worker_id], lazy="selectin")
     
     def __repr__(self):
         return f"<Response {self.id}: Worker {self.worker_id} -> Order {self.order_id} ({self.status})>"

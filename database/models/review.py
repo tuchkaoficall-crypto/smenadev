@@ -2,7 +2,7 @@
 Модель отзыва о работнике
 """
 from datetime import datetime
-from sqlalchemy import Column, BigInteger, String, Text, DateTime, Integer, ForeignKey
+from sqlalchemy import Column, BigInteger, String, Text, DateTime, Integer, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from database.database import Base
 
@@ -32,13 +32,13 @@ class Review(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Скрыт ли отзыв администратором
-    is_hidden = Column(String(50), default=False)
+    is_hidden = Column(Boolean, default=False, nullable=False)
     hidden_reason = Column(Text, nullable=True)
     
     # Relationships
-    order = relationship("Order", backref="reviews", foreign_keys=[order_id])
-    worker = relationship("Worker", backref="reviews", foreign_keys=[worker_id])
-    employer = relationship("Employer", backref="reviews", foreign_keys=[employer_id])
+    order = relationship("Order", backref="reviews", foreign_keys=[order_id], lazy="selectin")
+    worker = relationship("Worker", backref="reviews", foreign_keys=[worker_id], lazy="selectin")
+    employer = relationship("Employer", backref="reviews", foreign_keys=[employer_id], lazy="selectin")
     
     def __repr__(self):
         return f"<Review {self.id}: Worker {self.worker_id} - {self.rating}★>"

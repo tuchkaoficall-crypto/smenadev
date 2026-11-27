@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+
+{% block title %}Журнал действий — СМЕНА{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div><h1>Журнал действий</h1><div class="sub">Кто, когда и что сделал в панели. Всего записей: {{ total }}</div></div>
+    <a href="{{ url_for('audit.export_csv', **args) }}" class="btn btn-outline-secondary"><i class="bi bi-download"></i> Экспорт CSV</a>
+</div>
+
+<div class="card mb-3"><div class="card-body">
+    <form class="filter-bar auto-submit" method="get">
+        <input type="search" name="q" class="form-control flex-grow-1" value="{{ args.get('q', '') }}" placeholder="Текст или ID объекта">
+        <select name="action" class="form-select" style="max-width:260px"><option value="">Все действия</option>
+            {% for k, n in ACTION_NAMES.items() %}<option value="{{ k }}" {% if args.get('action') == k %}selected{% endif %}>{{ n }}</option>{% endfor %}</select>
+        <select name="entity" class="form-select" style="max-width:200px"><option value="">Все объекты</option>
+            {% for k, n in [('order','Заказы'),('employer','Работодатели'),('worker','Работники'),('broadcast','Рассылки')] %}
+            <option value="{{ k }}" {% if args.get('entity') == k %}selected{% endif %}>{{ n }}</option>{% endfor %}</select>
+        <button class="btn btn-primary"><i class="bi bi-funnel"></i></button>
+    </form>
+</div></div>
+
+<div class="card">
+    {% if actions %}
+    <div class="table-responsive"><table class="table align-middle">
+        <thead><tr><th class="ps-3">Время (UTC)</th><th>Админ</th><th>Действие</th><th>Объект</th><th>Подробности</th></tr></thead>
+        <tbody>
+        {% for a in actions %}
+        <tr>
+            <td class="ps-3 small text-nowrap">{{ a.created_at|dt('%d.%m.%Y %H:%M:%S') }}</td>
+            <td class="small">{{ a.admin or '—' }}</td>
+            <td><span class="fw-semibold">{{ ACTION_NAMES.get(a.action, a.action) }}</span></td>
+            <td class="small">
+                {% if a.entity_type == 'order' %}<a href="{{ url_for('orders.detail', order_id=a.entity_id) }}">Заказ #{{ a.entity_id }}</a>
+                {% elif a.entity_type == 'employer' %}<a href="{{ url_for('employers.detail', employer_id=a.entity_id) }}">Работодатель #{{ a.entity_id }}</a>
+                {% elif a.entity_type == 'worker' %}<a href="{{ url_for('workers.detail', worker_id=a.entity_id) }}">Работник #{{ a.entity_id }}</a>
+                {% elif a.entity_type == 'broadcast' %}<a href="{{ url_for('broadcasts.index') }}">Рассылка #{{ a.entity_id }}</a>
+                {% else %}—{% endif %}
+            </td>
+            <td class="small text-body-secondary" style="max-width:420px">{{ a.summary or '' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody></table></div>
+    {% else %}<div class="empty"><i class="bi bi-journal"></i>Записей нет</div>{% endif %}
+</div>
+{{ m.pagination('audit.index', page, total_pages, args) }}
+{% endblock %}

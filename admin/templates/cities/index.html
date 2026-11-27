@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}Города — СМЕНА{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div><h1>Города</h1>
+        <div class="sub">Активные города показываются при регистрации работника, в форме заявки работодателя
+            и в фильтрах рассылок. Вакансии рассылаются работникам того же города. Бот подхватывает изменения в течение минуты.</div></div>
+</div>
+
+<div class="row g-4">
+    <div class="col-xl-8">
+        <div class="card">
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th class="ps-3">Порядок</th><th>Город</th><th class="text-end">Работников</th><th class="text-end">Заказов</th><th class="text-end">Активных заказов</th><th>Статус</th><th class="text-end pe-3"></th></tr></thead>
+                    <tbody>
+                    {% for c in cities %}
+                    <tr class="{% if not c.is_active %}opacity-50{% endif %}">
+                        <td class="ps-3 text-nowrap">
+                            <form method="POST" action="{{ url_for('cities.move', city_id=c.id, direction='up') }}" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-link p-0" {% if loop.first %}disabled{% endif %}><i class="bi bi-arrow-up"></i></button>
+                            </form>
+                            <form method="POST" action="{{ url_for('cities.move', city_id=c.id, direction='down') }}" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-link p-0" {% if loop.last %}disabled{% endif %}><i class="bi bi-arrow-down"></i></button>
+                            </form>
+                        </td>
+                        <td>
+                            <form method="POST" action="{{ url_for('cities.rename', city_id=c.id) }}" class="d-flex gap-1" data-confirm="Переименовать город? Название обновится у всех работников и заказов.">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="text" name="name" value="{{ c.name }}" class="form-control form-control-sm fw-semibold" maxlength="60" style="max-width: 220px">
+                                <button class="btn btn-sm btn-outline-secondary" title="Сохранить название"><i class="bi bi-check"></i></button>
+                            </form>
+                        </td>
+                        <td class="text-end num">{{ workers.get(c.name, 0) }}</td>
+                        <td class="text-end num">{{ orders.get(c.name, 0) }}</td>
+                        <td class="text-end num">{{ active.get(c.name, 0) }}</td>
+                        <td>{% if c.is_active %}<span class="badge rounded-pill text-bg-success">активен</span>{% else %}<span class="badge rounded-pill text-bg-secondary">скрыт</span>{% endif %}</td>
+                        <td class="text-end pe-3">
+                            <form method="POST" action="{{ url_for('cities.toggle', city_id=c.id) }}" class="d-inline"
+                                  data-confirm="{{ 'Скрыть город? Новые работники и заявки не смогут его выбрать, существующие данные останутся.' if c.is_active else 'Включить город?' }}">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm {{ 'btn-outline-secondary' if c.is_active else 'btn-outline-success' }}">{{ 'Скрыть' if c.is_active else 'Включить' }}</button>
+                            </form>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% if unknown %}
+        <div class="alert alert-warning mt-3 small">В данных встречаются города, которых нет в списке: {{ unknown|join(', ') }}.
+            Добавьте их, если они должны быть доступны для выбора.</div>
+        {% endif %}
+    </div>
+    <div class="col-xl-4">
+        <div class="card">
+            <div class="card-header"><i class="bi bi-plus-lg me-1"></i> Добавить город</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('cities.add') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="text" name="name" class="form-control mb-2" placeholder="Например: Кондопога" maxlength="60" required>
+                    <button class="btn btn-primary w-100">Добавить</button>
+                </form>
+                <p class="small text-body-secondary mt-2 mb-0">После добавления город сразу доступен работникам при регистрации
+                    и в профиле («📍 Сменить город»), а работодателям в форме заявки.</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

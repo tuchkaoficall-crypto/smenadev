@@ -6,12 +6,18 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 import json
 import logging
+from html import escape
+from datetime import datetime
 
 from database import async_session
 from services import UserService, WorkerService, OrderService, ResponseService, ReviewService
 from bot.keyboards import reply, inline
 from bot.states import WorkerRegistration
-from config import UserRole, ResponseStatus, OrderStatus
+from bot.handlers.worker_tools import profile_markup as _profile_markup
+from services import order_texts as T
+from services import reliability as R
+from services.cities import is_active as is_active_city
+from config import UserRole, ResponseStatus, OrderStatus, PENALTY_WINDOW_DAYS, ADMIN_CONTACT
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -23,10 +29,14 @@ logger = logging.getLogger(__name__)
 async def process_worker_city(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора города при регистрации работника"""
     city = callback.data.split("_", 1)[1]
+    if not is_active_city(city):
+        await callback.answer("Этот город сейчас недоступен, выберите другой", show_alert=True)
+        await callback.message.edit_reply_markup(reply_markup=inline.get_cities_keyboard())
+        return
     await state.update_data(city=city)
     
     await callback.message.edit_text(
-        f"✅ Город: <b>{city}</b>\n\n"
+        f"✅ Город: <b>{escape(city)}</b>\n\n"
         "📝 Теперь введите ваше <b>имя и фамилию</b>:",
         parse_mode="HTML"
     )
@@ -37,10 +47,10 @@ async def process_worker_city(callback: CallbackQuery, state: FSMContext):
 @router.message(WorkerRegistration.name)
 async def process_worker_name(message: Message, state: FSMContext):
     """Обработка имени работника"""
-    name = message.text.strip()
+    name = (message.text or "").strip()
     
-    if len(name) < 2:
-        await message.answer("❌ Пожалуйста, введите корректное имя (минимум 2 символа):")
+    if len(name) < 2 or len(name) > 100:
+        await message.answer("❌ Пожалуйста, введите корректное имя (от 2 до 100 символов):")
         return
     
     await state.update_data(name=name)
@@ -51,7 +61,7 @@ async def process_worker_name(message: Message, state: FSMContext):
             session,
             user_id=message.from_user.id,
             first_name=name.split()[0] if name.split() else name,
-            last_name=name.split()[1] if len(name.split()) > 1 else None
+            last_name=" ".join(name.split()[1:]) if len(name.split()) > 1 else None
         )
     
     await message.answer(
@@ -66,7 +76,11 @@ async def process_worker_name(message: Message, state: FSMContext):
 async def process_worker_phone(message: Message, state: FSMContext):
     """Обработка телефона работника"""
     import re
-    phone = message.text.strip()
+    # Телефон можно ввести текстом или отправить контактом
+    if message.contact:
+        phone = message.contact.phone_number
+    else:
+        phone = (message.text or "").strip()
     
     # Убираем все кроме цифр
     phone_digits = re.sub(r'\D', '', phone)
@@ -96,8 +110,6 @@ async def process_worker_phone(message: Message, state: FSMContext):
         )
     
     await state.update_data(phone=formatted_phone)
-    
-    data = await state.get_data()
     
     await message.answer(
         f"✅ Телефон: {formatted_phone}\n\n"
@@ -133,9 +145,9 @@ async def process_worker_categories(callback: CallbackQuery, state: FSMContext):
         
         await callback.message.edit_text(
             f"✅ <b>Регистрация завершена!</b>\n\n"
-            f"👤 Имя: {data['name']}\n"
+            f"👤 Имя: {escape(data['name'])}\n"
             f"📱 Телефон: {data['phone']}\n"
-            f"📍 Город: {data['city']}\n"
+            f"📍 Город: {escape(data['city'])}\n"
             f"💼 Категории: {cats_text}\n\n"
             f"Вы будете получать уведомления о новых вакансиях.",
             parse_mode="HTML"
@@ -164,9 +176,9 @@ async def process_worker_categories(callback: CallbackQuery, state: FSMContext):
         
         await callback.message.edit_text(
             f"✅ <b>Регистрация завершена!</b>\n\n"
-            f"👤 Имя: {data['name']}\n"
+            f"👤 Имя: {escape(data['name'])}\n"
             f"📱 Телефон: {data['phone']}\n"
-            f"📍 Город: {data['city']}\n"
+            f"📍 Город: {escape(data['city'])}\n"
             f"💼 Категории: Любая работа\n\n"
             f"Вы будете получать уведомления о всех вакансиях.",
             parse_mode="HTML"
@@ -200,6 +212,8 @@ async def process_worker_categories(callback: CallbackQuery, state: FSMContext):
             
             count = len(categories)
             await callback.answer(f"Выбрано категорий: {count}")
+        else:
+            await callback.answer()
 
 
 async def start_worker_registration(message: Message, state: FSMContext):
@@ -223,20 +237,31 @@ async def find_jobs(message: Message):
             return
         
         # Получаем категории работника
-        categories = json.loads(worker.categories)
+        try:
+            categories = json.loads(worker.categories) if worker.categories else []
+        except (ValueError, TypeError):
+            categories = []
         
         # Поиск вакансий
         all_orders = []
-        for category in categories:
-            orders = await OrderService.get_orders_by_city_and_category(
-                session,
-                worker.city,
-                category
-            )
-            all_orders.extend(orders)
+        if not categories:
+            # «Любая работа» — показываем все активные вакансии города
+            all_orders = await OrderService.get_active_orders_by_city(session, worker.city)
+        else:
+            for category in categories:
+                orders = await OrderService.get_orders_by_city_and_category(
+                    session,
+                    worker.city,
+                    category
+                )
+                all_orders.extend(orders)
         
-        # Убираем дубликаты
-        unique_orders = {order.id: order for order in all_orders}.values()
+        # Убираем дубликаты и смены, которые уже начались
+        now = datetime.now()
+        unique_orders = sorted(
+            {o.id: o for o in all_orders if o.shift_date and o.shift_date > now}.values(),
+            key=lambda o: o.shift_date,
+        )
         
         if not unique_orders:
             await message.answer(
@@ -247,12 +272,12 @@ async def find_jobs(message: Message):
             return
         
         await message.answer(
-            f"🔍 Найдено вакансий: {len(list(unique_orders))}\n\n"
+            f"🔍 Найдено вакансий: {len(unique_orders)}\n\n"
             "Просмотрите доступные предложения:",
             reply_markup=reply.get_worker_menu()
         )
         
-        for order in unique_orders:
+        for order in unique_orders[:20]:
             # Проверяем, откликнулся ли уже работник
             has_responded = await ResponseService.has_responded(
                 session,
@@ -260,26 +285,15 @@ async def find_jobs(message: Message):
                 order.id
             )
             
-            text = (
-                f"📌 Вакансия #{order.id}\n\n"
-                f"💼 {order.category}\n"
-                f"📍 {order.city}, {order.address}\n"
-                f"📅 {order.shift_date.strftime('%d.%m.%Y')} в {order.shift_date.strftime('%H:%M')}\n"
-                f"⏱ Продолжительность: {order.shift_duration} ч.\n"
-                f"👥 Требуется: {order.workers_needed} чел.\n"
-                f"💰 {order.payment_display}\n\n"
-                f"📝 Описание:\n{order.description}"
-            )
-            
-            if order.requirements:
-                text += f"\n\n✅ Требования:\n{order.requirements}"
-            
+            text = f"📌 <b>Вакансия #{order.id}</b>\n\n{T.order_details(order)}"
+
             if has_responded:
                 text += "\n\n✅ Вы уже откликнулись на эту вакансию"
-                await message.answer(text)
+                await message.answer(text, parse_mode="HTML")
             else:
                 await message.answer(
                     text,
+                    parse_mode="HTML",
                     reply_markup=inline.get_response_button(order.id)
                 )
 
@@ -297,6 +311,27 @@ async def process_response(callback: CallbackQuery):
             await callback.answer("❌ Ошибка. Попробуйте снова.", show_alert=True)
             return
         
+        if order.status != OrderStatus.SEARCH_WORKERS:
+            await callback.answer("😔 Набор на эту вакансию уже закрыт.", show_alert=True)
+            return
+        
+        if order.shift_date <= datetime.now():
+            await callback.answer("😔 Эта смена уже началась.", show_alert=True)
+            return
+        
+        # Повторное нажатие не должно создавать дубль и повторно дёргать админов
+        if await ResponseService.has_responded(session, worker.id, order_id):
+            await callback.answer("Вы уже откликнулись на эту вакансию", show_alert=True)
+            return
+
+        points = await R.worker_points_async(session, worker.id)
+        if R.is_restricted(points):
+            await callback.answer(
+                f"⛔️ У вас {points} штрафных баллов (неявки или поздние отказы), отклики временно "
+                f"недоступны. Баллы сгорают через {PENALTY_WINDOW_DAYS} дней. Вопросы: {ADMIN_CONTACT}",
+                show_alert=True)
+            return
+        
         # Создаем отклик
         response = await ResponseService.create_response(
             session,
@@ -305,16 +340,23 @@ async def process_response(callback: CallbackQuery):
         )
         
         # Уведомляем администраторов
-        from bot.utils.notifications import notify_admins_new_response
-        await notify_admins_new_response(response.id)
+        try:
+            from bot.utils.notifications import notify_admins_new_response
+            await notify_admins_new_response(response.id)
+        except Exception as e:
+            logger.exception("Ошибка уведомления админов об отклике: %s", e)
         
-        await callback.message.edit_text(
-            callback.message.text + "\n\n✅ Вы откликнулись на эту вакансию"
-        )
+        try:
+            await callback.message.edit_text(
+                (callback.message.html_text or "") + "\n\n✅ Вы откликнулись на эту вакансию",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.warning("Не удалось обновить сообщение вакансии: %s", e)
         
         await callback.answer(
-            "✅ Ваш отклик отправлен!\n"
-            "Администратор свяжется с вами для уточнения деталей.",
+            "✅ Отклик отправлен!\n"
+            "Мы сообщим, когда вас подтвердят. Статус виден в «📝 Мои отклики».",
             show_alert=True
         )
 
@@ -323,52 +365,126 @@ async def process_response(callback: CallbackQuery):
 
 @router.message(F.text == "📝 Мои отклики")
 async def show_my_responses(message: Message):
-    """Показать отклики работника"""
+    """Отклики работника: сначала актуальные смены, с кнопками отказа"""
+    from bot.utils import lifecycle as L
+    from bot.keyboards.lifecycle import to_markup
+    from services import order_keyboards as K
+
     async with async_session() as session:
         worker = await WorkerService.get_worker(session, message.from_user.id)
-        
         if not worker:
-            await message.answer(
-                "❌ Сначала необходимо пройти регистрацию.",
-                reply_markup=reply.get_worker_menu()
-            )
+            await message.answer("❌ Сначала необходимо пройти регистрацию.", reply_markup=reply.get_worker_menu())
             return
-        
         responses = await ResponseService.get_worker_responses(session, worker.id)
-        
-        if not responses:
-            await message.answer(
-                "У вас пока нет откликов.\n\n"
-                "Найдите подходящую работу, нажав «🔍 Найти работу».",
-                reply_markup=reply.get_worker_menu()
-            )
-            return
-        
+        from bot.utils import checkin as C
+        from database.models import ShiftCheckin
+        from sqlalchemy import select
+        checked = set((await session.execute(select(ShiftCheckin.response_id).where(
+            ShiftCheckin.worker_id == worker.id))).scalars().all())
+
+    def can_checkin(r):
+        if r.id in checked:
+            return False
+        try:
+            C.check_allowed(r, datetime.now())
+            return True
+        except C.CheckinError:
+            return False
+
+    if not responses:
         await message.answer(
-            f"📝 Ваши отклики ({len(responses)}):",
-            reply_markup=reply.get_worker_menu()
+            "У вас пока нет откликов.\n\nНайдите подходящую работу, нажав «🔍 Найти работу».",
+            reply_markup=reply.get_worker_menu(),
         )
-        
+        return
+
+    def is_actual(r):
+        return r.order.status not in K.FINAL + K.DONE and r.status not in (
+            ResponseStatus.REJECTED, ResponseStatus.WITHDRAWN)
+
+    actual = sorted([r for r in responses if is_actual(r)], key=lambda r: r.order.shift_date)
+    history = [r for r in responses if not is_actual(r)]
+
+    await message.answer(
+        f"📝 <b>Ваши отклики</b>\nАктуальных: {len(actual)} · в истории: {len(history)}",
+        parse_mode="HTML", reply_markup=reply.get_worker_menu(),
+    )
+    for r in actual[:10]:
+        text, rows = L.worker_response_card(r, r.order, can_checkin(r))
+        if r.id in checked:
+            text += "\n📍 Вы отметились на месте"
+        await message.answer(text, parse_mode="HTML", reply_markup=to_markup(rows))
+
+    if history:
         from config import RESPONSE_STATUS_NAMES
-        
-        for response in responses[:10]:  # Показываем последние 10
-            order = response.order
-            status_name = RESPONSE_STATUS_NAMES.get(response.status, response.status)
-            
-            text = (
-                f"📌 Вакансия #{order.id}\n"
-                f"💼 {order.category}\n"
-                f"📍 {order.city}, {order.address}\n"
-                f"📅 {order.shift_date.strftime('%d.%m.%Y')}\n"
-                f"💰 {order.payment_display}\n"
-                f"📊 Статус отклика: {status_name}\n"
-                f"🕐 Дата отклика: {response.created_at.strftime('%d.%m.%Y %H:%M')}"
-            )
-            
-            if response.admin_comment:
-                text += f"\n\n💬 Комментарий: {response.admin_comment}"
-            
-            await message.answer(text)
+        lines = ["🗂 <b>История</b>"]
+        for r in history[:10]:
+            o = r.order
+            lines.append(f"• #{o.id} {escape(o.category)}, {o.shift_date.strftime('%d.%m')} · "
+                         f"{RESPONSE_STATUS_NAMES.get(r.status, r.status)}")
+        await message.answer("\n".join(lines), parse_mode="HTML")
+
+
+@router.callback_query(F.data.regexp(r"^wr:withdraw:\d+$"))
+async def withdraw_ask(callback: CallbackQuery):
+    """Отказ от отклика или смены: сначала подтверждение"""
+    from bot.keyboards.lifecycle import yes_no
+    response_id = int(callback.data.split(":")[2])
+    async with async_session() as session:
+        response = await ResponseService.get_response(session, response_id)
+        if not response or response.worker.user_id != callback.from_user.id:
+            await callback.answer("❌ Отклик не найден", show_alert=True)
+            return
+        confirmed = response.status == ResponseStatus.CONFIRMED
+        order = response.order
+    if confirmed:
+        text = (f"⚠️ Отказаться от смены #{order.id} ({order.shift_date.strftime('%d.%m %H:%M')})?\n\n"
+                "Работодатель и администратор получат уведомление и будут искать замену. "
+                "Пожалуйста, отказывайтесь как можно раньше.")
+        yes = "❌ Да, не смогу выйти"
+    else:
+        text = f"Отозвать отклик на вакансию #{order.id}?"
+        yes = "↩️ Да, отозвать"
+    await callback.message.answer(text, reply_markup=yes_no(yes, f"wr:withdrawyes:{response_id}"))
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^wr:withdrawyes:\d+$"))
+async def withdraw_yes(callback: CallbackQuery):
+    from bot.utils import lifecycle as L
+    response_id = int(callback.data.split(":")[2])
+    try:
+        was_confirmed = await L.withdraw_response(response_id, callback.from_user.id)
+    except L.LifecycleError as e:
+        await callback.answer(str(e), show_alert=True)
+        return
+    await callback.message.edit_text(
+        "Вы отказались от смены. Спасибо, что предупредили заранее!" if was_confirmed
+        else "Отклик отозван.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^wr:attend:\d+$"))
+async def attend_ok(callback: CallbackQuery):
+    """Работник подтвердил, что выйдет на смену (после напоминания)"""
+    from bot.utils import lifecycle as L
+    response_id = int(callback.data.split(":")[2])
+    async with async_session() as session:
+        response = await ResponseService.get_response(session, response_id)
+        if not response or response.worker.user_id != callback.from_user.id:
+            await callback.answer("❌ Отклик не найден", show_alert=True)
+            return
+        if response.status != ResponseStatus.CONFIRMED:
+            await callback.answer("Эта смена уже неактуальна", show_alert=True)
+            return
+        await L.add_event(session, response.order_id, "attend_ok", callback.from_user.id)
+        address = response.order.address
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.answer(f"👍 Отлично, ждём вас! Адрес: {escape(address)}")
+    await callback.answer()
 
 
 # ==== Профиль работника ====
@@ -395,16 +511,17 @@ async def show_worker_profile(message: Message):
         # Парсим категории
         try:
             categories = json.loads(worker.categories) if worker.categories else []
-        except:
+        except (ValueError, TypeError):
             categories = []
         
         # Безопасное получение данных
-        full_name = user.full_name if user else "Пользователь"
+        full_name = escape(user.full_name) if user else "Пользователь"
         phone = user.phone if user and user.phone else "Не указан"
         cats_text = ", ".join(categories) if categories else "Любая работа"
         
         # Формируем красивый текст профиля
-        rating_stars = "⭐️" * int(worker.rating) + "☆" * (5 - int(worker.rating))
+        stars_count = int(round(worker.rating or 0))
+        rating_stars = "⭐️" * stars_count + "☆" * (5 - stars_count)
         
         text = (
             f"╔══════════════════════╗\n"
@@ -412,7 +529,7 @@ async def show_worker_profile(message: Message):
             f"╚══════════════════════╝\n\n"
             f"<b>👨‍💼 Имя:</b> {full_name}\n"
             f"<b>📱 Телефон:</b> <code>{phone}</code>\n"
-            f"<b>📍 Город:</b> {worker.city}\n"
+            f"<b>📍 Город:</b> {escape(worker.city)}\n"
             f"<b>💼 Специализация:</b> {cats_text}\n\n"
             f"┏━━━━━━━━━━━━━━━━━━━━┓\n"
             f"┃  <b>📊 СТАТИСТИКА</b>       ┃\n"
@@ -421,7 +538,15 @@ async def show_worker_profile(message: Message):
             f"  ✅ Смен выполнено: <b>{worker.completed_shifts}</b>\n"
             f"  📅 На платформе с: <b>{worker.created_at.strftime('%d.%m.%Y')}</b>\n"
         )
-        
+        points = await R.worker_points_async(session, worker.id)
+        lvl = R.level(points)
+        text += f"  {lvl['emoji']} Надёжность: <b>{lvl['label']}</b>"
+        text += f" ({points} б.)\n" if points else "\n"
+        if worker.verified_at:
+            text += "  🪪 Документы проверены\n"
+        elif R.is_priority(worker, points):
+            text += "  ⚡️ Получаете вакансии первым\n"
+
         # Показываем последние отзывы
         try:
             reviews = await ReviewService.get_worker_reviews(session, worker.id, limit=3)
@@ -436,7 +561,7 @@ async def show_worker_profile(message: Message):
                     rev_stars = "⭐️" * review.rating + "☆" * (5 - review.rating)
                     text += f"\n<b>{i}.</b> {rev_stars}"
                     if review.comment:
-                        text += f"\n   <i>\"{review.comment}\"</i>"
+                        text += f"\n   <i>\"{escape(review.comment)}\"</i>"
                     text += f"\n   📅 {review.created_at.strftime('%d.%m.%Y')}\n"
             else:
                 text += (
@@ -446,8 +571,8 @@ async def show_worker_profile(message: Message):
                     f"  Пока нет отзывов\n"
                     f"  Выполните первую смену! 💪\n"
                 )
-        except:
-            pass
+        except Exception as e:
+            logger.warning("Не удалось загрузить отзывы: %s", e)
         
         # Отправляем с фото
         from pathlib import Path
@@ -456,13 +581,16 @@ async def show_worker_profile(message: Message):
         
         photo_path = Path(ASSETS_DIR) / "smena_profile_1280x720.png"
         
-        if photo_path.exists():
+        # Подпись к фото ограничена 1024 символами — длинный профиль шлём текстом
+        markup = _profile_markup(worker, points)
+        if photo_path.exists() and len(text) <= 1024:
             photo = FSInputFile(photo_path)
             await message.answer_photo(
                 photo=photo,
                 caption=text,
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=markup,
             )
         else:
             # Если фото нет, отправляем просто текст
-            await message.answer(text, parse_mode="HTML")
+            await message.answer(text, parse_mode="HTML", reply_markup=markup)

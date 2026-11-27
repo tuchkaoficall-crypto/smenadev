@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+
+{% block title %}Отзывы — СМЕНА{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div><h1>Отзывы</h1><div class="sub">Скрытый отзыв не учитывается в рейтинге работника, рейтинг пересчитывается сразу</div></div>
+</div>
+<div class="chips">
+    <a class="chip {% if not flt %}active{% endif %}" href="{{ url_for('reviews.index') }}">Все</a>
+    <a class="chip {% if flt == 'low' %}active{% endif %}" href="{{ url_for('reviews.index', filter='low') }}">Низкие оценки (1–2★)</a>
+    <a class="chip {% if flt == 'hidden' %}active{% endif %}" href="{{ url_for('reviews.index', filter='hidden') }}">Скрытые</a>
+</div>
+<div class="card">
+    {% if reviews %}
+    <div class="table-responsive"><table class="table align-middle">
+        <thead><tr><th class="ps-3">Оценка</th><th>Работник</th><th>От кого</th><th>Комментарий</th><th>Дата</th><th class="text-end pe-3"></th></tr></thead>
+        <tbody>
+        {% for r in reviews %}
+        <tr class="{% if r.is_hidden %}opacity-50{% endif %}">
+            <td class="ps-3 text-nowrap">{{ m.stars(r.rating) }}</td>
+            <td><a href="{{ url_for('workers.detail', worker_id=r.worker_id) }}">{{ r.worker.user.full_name if r.worker and r.worker.user else r.worker_id }}</a></td>
+            <td class="small">{{ r.employer.company_name if r.employer else '—' }}<div><a href="{{ url_for('orders.detail', order_id=r.order_id) }}">заказ #{{ r.order_id }}</a></div></td>
+            <td class="small" style="max-width:380px">{{ r.comment or '—' }}{% if r.is_hidden and r.hidden_reason %}<div class="text-danger">скрыт: {{ r.hidden_reason }}</div>{% endif %}</td>
+            <td class="small">{{ r.created_at|dt('%d.%m.%Y') }}</td>
+            <td class="text-end pe-3">
+                {% if r.is_hidden %}
+                <form method="POST" action="{{ url_for('reviews.unhide', review_id=r.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <button class="btn btn-sm btn-outline-success">Показать</button>
+                </form>
+                {% else %}
+                <form method="POST" action="{{ url_for('reviews.hide', review_id=r.id) }}" class="d-flex gap-1 justify-content-end">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="next" value="{{ request.full_path }}">
+                    <input type="text" name="reason" class="form-control form-control-sm" placeholder="Причина" style="width:130px">
+                    <button class="btn btn-sm btn-outline-secondary">Скрыть</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody></table></div>
+    {% else %}<div class="empty"><i class="bi bi-star"></i>Отзывов нет</div>{% endif %}
+</div>
+{% endblock %}

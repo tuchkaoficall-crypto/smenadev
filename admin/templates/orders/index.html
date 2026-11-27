@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+
+{% block title %}Заказы — СМЕНА{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>Заказы</h1>
+        <div class="sub">Найдено {{ total }} · ФОТ {{ summary.gmv|money }} · комиссия {{ summary.commission|money }} · мест {{ summary.workers }}</div>
+    </div>
+    <a href="{{ url_for('orders.export_csv', **args) }}" class="btn btn-outline-secondary"><i class="bi bi-download"></i> Экспорт CSV</a>
+</div>
+
+<div class="chips">
+    {% set base = args.copy() %}{% set _ = base.pop('status', None) %}
+    <a class="chip {% if not status %}active{% endif %}" href="{{ url_for('orders.index', **base) }}">Все</a>
+    <a class="chip {% if status == 'moderation' %}active{% endif %}" href="{{ url_for('orders.index', status='moderation', **base) }}">На модерации</a>
+    <a class="chip {% if status == 'active' %}active{% endif %}" href="{{ url_for('orders.index', status='active', **base) }}">В работе</a>
+    {% for key, name in status_names.items() if key not in ('created', 'moderation') %}
+    <a class="chip {% if status == key %}active{% endif %}" href="{{ url_for('orders.index', status=key, **base) }}">{{ name }}</a>
+    {% endfor %}
+</div>
+
+<div class="card mb-3">
+    <div class="card-body">
+        <form class="filter-bar auto-submit" method="get">
+            {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+            <div class="flex-grow-1">
+                <label class="form-label small text-body-secondary mb-1">Поиск</label>
+                <input type="search" class="form-control" name="q" value="{{ args.get('q', '') }}" placeholder="№, адрес, компания, описание">
+            </div>
+            <div>
+                <label class="form-label small text-body-secondary mb-1">Категория</label>
+                <select class="form-select" name="category">
+                    <option value="">Все</option>
+                    {% for c in categories %}<option {% if args.get('category') == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="form-label small text-body-secondary mb-1">Город</label>
+                <select class="form-select" name="city">
+                    <option value="">Все</option>
+                    {% for c in cities %}<option {% if args.get('city') == c %}selected{% endif %}>{{ c }}</option>{% endfor %}
+                </select>
+            </div>
+            <div>
+                <label class="form-label small text-body-secondary mb-1">Смена с</label>
+                <input type="date" class="form-control" name="date_from" value="{{ args.get('date_from', '') }}">
+            </div>
+            <div>
+                <label class="form-label small text-body-secondary mb-1">по</label>
+                <input type="date" class="form-control" name="date_to" value="{{ args.get('date_to', '') }}">
+            </div>
+            <div>
+                <label class="form-label small text-body-secondary mb-1">Сортировка</label>
+                <select class="form-select" name="sort">
+                    {% for k, n in [('new','Сначала новые'),('old','Сначала старые'),('shift','Ближайшие смены'),('shift_desc','Поздние смены'),('pay','Высокая ставка')] %}
+                    <option value="{{ k }}" {% if args.get('sort', 'new') == k %}selected{% endif %}>{{ n }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button class="btn btn-primary"><i class="bi bi-funnel"></i></button>
+            {% if args %}<a class="btn btn-link" href="{{ url_for('orders.index') }}">Сбросить</a>{% endif %}
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    {% if orders %}
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead><tr>
+                <th class="ps-3">№</th><th>Компания / категория</th><th>Адрес</th><th>Смена</th>
+                <th>Набор</th><th class="text-end">Ставка</th><th class="text-end">Комиссия</th><th>Статус</th>
+            </tr></thead>
+            <tbody>
+            {% for o in orders %}
+            {% set conf = o.responses|selectattr('status', 'in', ['confirmed', 'completed'])|list|length %}
+            <tr data-href="{{ url_for('orders.detail', order_id=o.id) }}">
+                <td class="ps-3 fw-semibold"><a href="{{ url_for('orders.detail', order_id=o.id) }}" class="text-decoration-none">#{{ o.id }}</a></td>
+                <td><div class="fw-semibold">{{ o.employer.company_name if o.employer else '—' }}</div><small class="text-body-secondary">{{ o.category }}</small></td>
+                <td class="small">{{ o.city }}, {{ o.address|truncate(40) }}</td>
+                <td class="small text-nowrap">{{ o.shift_date|dt('%d.%m.%Y %H:%M') }}<br><span class="text-body-secondary">{{ o.shift_duration }} ч</span></td>
+                <td style="min-width:110px">
+                    <div class="small num">{{ conf }} / {{ o.workers_needed }}</div>
+                    <div class="progress progress-thin"><div class="progress-bar {% if conf >= o.workers_needed %}bg-success{% endif %}" style="width: {{ ((conf / o.workers_needed * 100) if o.workers_needed else 0)|round }}%"></div></div>
+                </td>
+                <td class="text-end small text-nowrap">{{ o.payment_display }}</td>
+                <td class="text-end num">{{ (o.commission or 0)|money }}</td>
+                <td>{{ m.order_badge(o.status) }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty"><i class="bi bi-search"></i>Заказов не найдено</div>
+    {% endif %}
+</div>
+{{ m.pagination('orders.index', page, total_pages, args) }}
+{% endblock %}

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+
+{% block title %}{{ worker.user.full_name if worker.user else 'Работник' }} — СМЕНА{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb small">
+        <li class="breadcrumb-item"><a href="{{ url_for('workers.index') }}">Работники</a></li>
+        <li class="breadcrumb-item active">{{ worker.user.full_name if worker.user else worker.id }}</li>
+    </ol>
+</nav>
+
+{% set blocked = worker.user and worker.user.is_blocked %}
+<div class="page-head">
+    <div class="d-flex align-items-center gap-3">
+        <span class="avatar lg">{{ (worker.user.first_name or '?')[:1] if worker.user else '?' }}</span>
+        <div>
+            <h1>{{ worker.user.full_name if worker.user else worker.user_id }}
+                {% if blocked %}<span class="badge text-bg-dark">заблокирован</span>{% endif %}
+                {% if worker.verified_at %}<span class="badge text-bg-primary"><i class="bi bi-patch-check"></i> документы проверены</span>{% endif %}
+                <span class="badge text-bg-{{ rel.level.color }}">{{ rel.level.label }}{% if rel.points %} · {{ rel.points }} б.{% endif %}</span>
+                {% if rel.priority %}<span class="badge text-bg-light border">⚡ приоритет в рассылке</span>{% endif %}</h1>
+            <div class="sub">{{ worker.city }} · {{ categories|join(', ') if categories else 'любая работа' }} · с {{ worker.created_at|dt('%d.%m.%Y') }}</div>
+        </div>
+    </div>
+    <div>
+        {% if blocked %}
+        <form method="POST" action="{{ url_for('workers.unban', worker_id=worker.id) }}" data-confirm="Разблокировать работника?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-success"><i class="bi bi-unlock"></i> Разблокировать</button>
+        </form>
+        {% else %}
+        <button class="btn btn-outline-dark" data-bs-toggle="modal" data-bs-target="#banModal"><i class="bi bi-slash-circle"></i> Заблокировать</button>
+        {% endif %}
+    </div>
+</div>
+
+<div class="kpi-grid">
+    {{ m.kpi('bi-star', 'Рейтинг', ('%.2f'|format(worker.rating)) if worker.total_reviews else '—', worker.total_reviews ~ ' отзывов', None, 'warning') }}
+    {{ m.kpi('bi-flag', 'Смен выполнено', worker.completed_shifts, None, None, 'success') }}
+    {{ m.kpi('bi-hand-index', 'Откликов', stats.responses, 'подтверждено ' ~ ((stats.conversion ~ '%') if stats.conversion is not none else '—'), None, 'primary') }}
+    {{ m.kpi('bi-cash-coin', 'Заработал через сервис', stats.earned|money, None, None, 'info') }}
+    {{ m.kpi('bi-exclamation-triangle', 'Штрафные баллы', rel.points, 'неявок: ' ~ stats.no_show ~ ' · отказов: ' ~ stats.withdrawn, None, 'danger' if rel.points else 'success') }}
+</div>
+
+<div class="row g-4">
+    <div class="col-xl-4">
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-person me-1"></i> Профиль</div>
+            <div class="card-body">
+                <dl class="kv" style="grid-template-columns: 110px 1fr">
+                    <dt>Телефон</dt><dd>{% if worker.user and worker.user.phone %}<a href="tel:{{ worker.user.phone }}">{{ worker.user.phone }}</a>{% else %}—{% endif %}</dd>
+                    <dt>Telegram</dt><dd>{% if worker.user and worker.user.username %}<a href="https://t.me/{{ worker.user.username }}" target="_blank" rel="noopener">@{{ worker.user.username }}</a>{% else %}—{% endif %}
+                        <div class="small text-body-secondary">ID {{ worker.user_id }}</div></dd>
+                    <dt>Город</dt><dd>{{ worker.city }}</dd>
+                    <dt>Категории</dt><dd>{% for c in categories %}<span class="badge text-bg-light border me-1">{{ c }}</span>{% else %}Любая работа{% endfor %}</dd>
+                </dl>
+            </div>
+        </div>
+        {% include "workers/_reliability.html" %}
+        {% include "workers/_documents.html" %}
+
+        {% if worker.total_reviews %}
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-bar-chart me-1"></i> Оценки по критериям</div>
+            <div class="card-body">
+                {% for label, val in [('Пунктуальность', worker.punctuality_rating), ('Ответственность', worker.responsibility_rating), ('Качество работы', worker.quality_rating), ('Соблюдение договорённостей', worker.communication_rating)] %}
+                <div class="mb-2">
+                    <div class="d-flex justify-content-between small"><span>{{ label }}</span><span class="num">{{ '%.1f'|format(val or 0) }}</span></div>
+                    <div class="progress progress-thin"><div class="progress-bar bg-warning" style="width: {{ ((val or 0) / 5 * 100)|round }}%"></div></div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="col-xl-8">
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-clock-history me-1"></i> История откликов и смен ({{ responses|length }})</div>
+            {% if responses %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th class="ps-3">Заказ</th><th>Компания</th><th>Смена</th><th class="text-end">Оплата</th><th>Статус отклика</th></tr></thead>
+                    <tbody>
+                    {% for r in responses %}
+                    <tr data-href="{{ url_for('orders.detail', order_id=r.order_id) }}">
+                        <td class="ps-3 fw-semibold">#{{ r.order_id }}{% if r.order %} <span class="fw-normal">{{ r.order.category }}</span>{% endif %}</td>
+                        <td class="small">{{ r.order.employer.company_name if r.order and r.order.employer else '—' }}</td>
+                        <td class="small">{{ r.order.shift_date|dt('%d.%m.%Y %H:%M') if r.order else '—' }}</td>
+                        <td class="text-end num small">{{ r.order.shift_amount|money if r.order else '—' }}</td>
+                        <td>{{ m.response_badge(r.status) }}
+                            {% if checkins.get(r.id) %}{% set c = checkins[r.id] %}<div class="small text-body-secondary"><i class="bi bi-geo-alt"></i> на месте {{ c.created_at|dt('%H:%M') }}{% if c.late_minutes %} (+{{ c.late_minutes }} мин){% endif %}</div>{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}<div class="empty"><i class="bi bi-hand-index"></i>Откликов нет</div>{% endif %}
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-star me-1"></i> Отзывы ({{ reviews|length }})</div>
+            <div class="card-body">
+                {% for review in reviews %}
+                <div class="d-flex justify-content-between gap-3 border-bottom pb-2 mb-2 {% if review.is_hidden %}opacity-50{% endif %}">
+                    <div class="small">
+                        {{ m.stars(review.rating) }}
+                        <span class="text-body-secondary">{{ review.employer.company_name if review.employer else '' }} · заказ #{{ review.order_id }} · {{ review.created_at|dt('%d.%m.%Y') }}</span>
+                        {% if review.is_hidden %}<span class="badge text-bg-secondary">скрыт{% if review.hidden_reason %}: {{ review.hidden_reason }}{% endif %}</span>{% endif %}
+                        {% if review.comment %}<div>{{ review.comment }}</div>{% endif %}
+                    </div>
+                    <form method="POST" action="{{ url_for('reviews.unhide' if review.is_hidden else 'reviews.hide', review_id=review.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="next" value="{{ url_for('workers.detail', worker_id=worker.id) }}">
+                        <button class="btn btn-sm btn-outline-secondary text-nowrap">{{ 'Показать' if review.is_hidden else 'Скрыть' }}</button>
+                    </form>
+                </div>
+                {% else %}
+                <p class="text-body-secondary small mb-0">Отзывов нет</p>
+                {% endfor %}
+            </div>
+        </div>
+
+        {{ m.history_card(history, url_for('workers.note', worker_id=worker.id)) }}
+    </div>
+</div>
+
+<div class="modal fade" id="banModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form class="modal-content" method="POST" action="{{ url_for('workers.ban', worker_id=worker.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="modal-header"><h5 class="modal-title">Заблокировать работника</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <label class="form-label">Причина</label>
+                <textarea class="form-control mb-3" name="reason" rows="3" placeholder="Например: неявка на смену без предупреждения"></textarea>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="notify" value="1" id="notify">
+                    <label class="form-check-label" for="notify">Сообщить работнику в Telegram</label>
+                </div>
+                <p class="small text-body-secondary mt-2 mb-0">Заблокированный пользователь не сможет пользоваться ботом и не попадёт в рассылки.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="submit" class="btn btn-dark">Заблокировать</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

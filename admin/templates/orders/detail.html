@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+
+{% block title %}Заказ #{{ order.id }} — СМЕНА{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb small">
+        <li class="breadcrumb-item"><a href="{{ url_for('orders.index') }}">Заказы</a></li>
+        <li class="breadcrumb-item active">#{{ order.id }}</li>
+    </ol>
+</nav>
+
+<div class="page-head">
+    <div>
+        <h1>Заказ #{{ order.id }} · {{ order.category }} {{ m.order_badge(order.status) }}</h1>
+        <div class="sub">
+            {% if order.employer %}<a href="{{ url_for('employers.detail', employer_id=order.employer.id) }}">{{ order.employer.company_name }}</a> · {% endif %}
+            {{ order.city }}, {{ order.address }} · смена {{ order.shift_date|dt }}
+        </div>
+    </div>
+</div>
+
+<!-- Конвейер статусов -->
+<div class="card mb-4">
+    <div class="card-body">
+        {% set cur = pipeline_index.get(order.status, -1) %}
+        <div class="pipeline {% if order.status == 'cancelled' %}cancelled{% endif %}">
+            {% for s, label, icon in pipeline %}
+            <div class="step {% if loop.index0 < cur %}done{% elif loop.index0 == cur %}current{% endif %}">
+                <div class="circle"><i class="bi {{ 'bi-check-lg' if loop.index0 < cur else icon }}"></i></div>{{ label }}
+            </div>
+            {% endfor %}
+        </div>
+        {% if order.status == 'cancelled' %}
+        <div class="alert alert-danger mt-3 mb-0 py-2"><i class="bi bi-x-octagon"></i> Заказ отменён{% if order.rejection_reason %}: {{ order.rejection_reason }}{% endif %}</div>
+        {% endif %}
+
+        {% if actions %}
+        <div class="d-flex flex-wrap gap-2 mt-3 pt-3 border-top">
+            <span class="text-body-secondary small align-self-center me-1">Следующий шаг:</span>
+            {% if 'approve' in actions %}
+            <form method="POST" action="{{ url_for('orders.approve', order_id=order.id) }}" data-confirm="Одобрить заявку и разослать вакансию работникам?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-success"><i class="bi bi-check-circle"></i> Одобрить и разослать</button>
+            </form>
+            {% endif %}
+            {% if 'reject' in actions %}
+            <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#reasonModal"
+                    data-action="{{ url_for('orders.reject', order_id=order.id) }}" data-title="Отклонить заявку"><i class="bi bi-x-circle"></i> Отклонить</button>
+            {% endif %}
+            {% if 'prepayment' in actions %}
+            <form method="POST" action="{{ url_for('orders.prepayment', order_id=order.id) }}" data-confirm="Выставить работодателю предоплату {{ prepayment_due|money }}?">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-primary"><i class="bi bi-credit-card"></i> Запросить предоплату {{ prepayment_due|money }}</button>
+            </form>
+            {% endif %}
+            {% if 'start' in actions %}
+            <form method="POST" action="{{ url_for('orders.start', order_id=order.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-primary" {% if not confirmed %}disabled title="Нет подтверждённых работников"{% endif %}><i class="bi bi-play-circle"></i> Смена началась</button>
+            </form>
+            {% endif %}
+            {% if 'complete' in actions %}
+            <form method="POST" action="{{ url_for('orders.complete', order_id=order.id) }}" data-confirm="Завершить смену? Работникам будет засчитана смена, работодатель получит запрос на оценку.">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-primary" {% if not confirmed %}disabled title="Нет подтверждённых работников"{% endif %}><i class="bi bi-flag"></i> Завершить смену</button>
+            </form>
+            {% endif %}
+            {% if 'close' in actions %}
+            <form method="POST" action="{{ url_for('orders.close', order_id=order.id) }}" data-confirm="Закрыть расчёт? Ожидающие платежи будут отмечены оплаченными.">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-success"><i class="bi bi-check2-all"></i> Закрыть расчёт ({{ (order.commission or 0)|money }})</button>
+            </form>
+            {% endif %}
+            {% if 'cancel' in actions %}
+            <button class="btn btn-outline-danger ms-auto" data-bs-toggle="modal" data-bs-target="#reasonModal"
+                    data-action="{{ url_for('orders.cancel', order_id=order.id) }}" data-title="Отменить заказ"><i class="bi bi-x-octagon"></i> Отменить заказ</button>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-xl-8">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-people me-1"></i> Отклики ({{ responses|length }})</span>
+                <span class="small">Подтверждено <strong>{{ confirmed }}</strong> из {{ order.workers_needed }}</span>
+            </div>
+            {% if responses %}
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead><tr><th class="ps-3">Работник</th><th>Рейтинг</th><th>Смен</th><th>Статус</th><th>На месте</th><th>Отклик</th><th class="text-end pe-3">Действия</th></tr></thead>
+                    <tbody>
+                    {% for r in responses %}
+                    <tr>
+                        <td class="ps-3">
+                            {% if r.worker %}
+                            <div class="d-flex align-items-center gap-2">
+                                <span class="avatar">{{ (r.worker.user.first_name or '?')[:1] if r.worker.user else '?' }}</span>
+                                <div>
+                                    <a href="{{ url_for('workers.detail', worker_id=r.worker.id) }}" class="fw-semibold text-decoration-none">{{ r.worker.user.full_name if r.worker.user else r.worker.user_id }}</a>
+                                    {% if r.worker.user and r.worker.user.is_blocked %}<span class="badge text-bg-dark">бан</span>{% endif %}
+                                    {% if r.worker.verified_at %}<i class="bi bi-patch-check-fill text-primary" title="Документы проверены"></i>{% endif %}
+                                    {% if rel.get(r.worker.id) and rel[r.worker.id].points %}<span class="badge text-bg-{{ rel[r.worker.id].level.color }}" title="Штрафные баллы">{{ rel[r.worker.id].points }} б.</span>{% endif %}
+                                    <div class="small text-body-secondary">{{ r.worker.user.phone if r.worker.user and r.worker.user.phone else '' }}
+                                        {% if r.worker.user and r.worker.user.username %}<a href="https://t.me/{{ r.worker.user.username }}" target="_blank" rel="noopener">@{{ r.worker.user.username }}</a>{% endif %}</div>
+                                </div>
+                            </div>
+                            {% else %}—{% endif %}
+                        </td>
+                        <td>{% if r.worker and r.worker.total_reviews %}{{ m.stars(r.worker.rating) }} <small>{{ '%.1f'|format(r.worker.rating) }}</small>{% else %}<small class="text-body-secondary">нет оценок</small>{% endif %}</td>
+                        <td class="num">{{ r.worker.completed_shifts if r.worker else '—' }}</td>
+                        <td>{{ m.response_badge(r.status) }}{% if r.admin_comment %}<div class="small text-body-secondary">{{ r.admin_comment }}</div>{% endif %}</td>
+                        <td class="small text-nowrap">{% set c = checkins.get(r.id) %}{% if c %}
+                            <i class="bi bi-geo-alt-fill text-success"></i> {{ c.created_at|dt('%H:%M') }}
+                            {% if c.late_minutes %}<span class="{{ 'text-danger' if c.late_minutes > 15 else 'text-body-secondary' }}">+{{ c.late_minutes }} мин</span>{% endif %}
+                            {% if c.distance_m is not none %}<div class="{{ 'text-danger' if c.distance_m > 500 else 'text-body-secondary' }}">{{ c.distance_m }} м</div>{% endif %}
+                            {% if c.map_url %}<a href="{{ c.map_url }}" target="_blank" rel="noopener">карта</a>{% else %}<span class="text-body-secondary">без гео</span>{% endif %}
+                            {% elif r.status == 'confirmed' and order.shift_date <= now %}<span class="text-warning">не отметился</span>{% else %}—{% endif %}</td>
+                        <td class="small text-nowrap">{{ r.created_at|dt('%d.%m %H:%M') }}</td>
+                        <td class="text-end pe-3 text-nowrap">
+                            {% if order.status not in ['payment_completed', 'cancelled'] %}
+                            {% if r.status in ['pending', 'contacted'] %}
+                            <form method="POST" action="{{ url_for('orders.response_action', response_id=r.id, action='confirm') }}" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-success" title="Подтвердить" {% if confirmed >= order.workers_needed %}disabled{% endif %}><i class="bi bi-check-lg"></i></button>
+                            </form>
+                            {% endif %}
+                            {% if r.status == 'pending' %}
+                            <form method="POST" action="{{ url_for('orders.response_action', response_id=r.id, action='contact') }}" class="d-inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-outline-info" title="Связались"><i class="bi bi-telephone"></i></button>
+                            </form>
+                            {% endif %}
+                            {% if r.status in ['confirmed', 'completed'] and order.shift_date <= now %}
+                            <form method="POST" action="{{ url_for('orders.response_action', response_id=r.id, action='noshow') }}" class="d-inline" data-confirm="Отметить неявку? Работнику начислится 5 штрафных баллов, смена не будет засчитана.">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-outline-dark" title="Не вышел на смену"><i class="bi bi-person-x"></i></button>
+                            </form>
+                            {% endif %}
+                            {% if r.status in ['pending', 'contacted', 'confirmed'] %}
+                            <form method="POST" action="{{ url_for('orders.response_action', response_id=r.id, action='reject') }}" class="d-inline" data-confirm="Отклонить отклик? Работник получит уведомление.">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button class="btn btn-sm btn-outline-danger" title="Отклонить"><i class="bi bi-x-lg"></i></button>
+                            </form>
+                            {% endif %}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty"><i class="bi bi-person-plus"></i>Пока нет откликов</div>
+            {% endif %}
+        </div>
+
+        <div class="card mb-4" id="checkins">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-geo-alt me-1"></i> Отметки «я на месте» ({{ checkins|length }} из {{ confirmed + (responses|selectattr('status', 'equalto', 'completed')|list|length) }})</span>
+                {% if order.has_point %}<a class="small" target="_blank" rel="noopener" href="https://yandex.ru/maps/?pt={{ order.longitude }},{{ order.latitude }}&z=17&l=map">точка заказа на карте</a>{% endif %}
+            </div>
+            <div class="card-body">
+                <p class="small text-body-secondary mb-2">Работники получают кнопку «📍 Я на месте» за 30 минут до начала. Через 15 минут после начала
+                    работодатель и админы получают список тех, кто не отметился. Если задать точку, бот посчитает расстояние до неё.</p>
+                <form method="POST" action="{{ url_for('orders.set_point', order_id=order.id) }}" class="d-flex gap-2">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="text" name="point" class="form-control form-control-sm" value="{{ '%.6f, %.6f'|format(order.latitude, order.longitude) if order.has_point else '' }}"
+                           placeholder="Координаты точки: 61.7849, 34.3469 (пусто — удалить)">
+                    <button class="btn btn-sm btn-outline-primary text-nowrap">Сохранить точку</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-card-text me-1"></i> Описание</div>
+            <div class="card-body">
+                <dl class="kv">
+                    <dt>Категория</dt><dd>{{ order.category }}</dd>
+                    <dt>Адрес</dt><dd>{{ order.city }}, {{ order.address }}</dd>
+                    <dt>Начало смены</dt><dd>{{ order.shift_date|dt }} · {{ order.shift_duration }} ч</dd>
+                    <dt>Описание</dt><dd style="white-space: pre-wrap">{{ order.description }}</dd>
+                    <dt>Требования</dt><dd style="white-space: pre-wrap">{{ order.requirements or '—' }}</dd>
+                </dl>
+            </div>
+        </div>
+
+        {{ m.history_card(history, url_for('orders.note', order_id=order.id)) }}
+    </div>
+
+    <div class="col-xl-4">
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-calculator me-1"></i> Экономика заказа</div>
+            <div class="card-body">
+                <dl class="kv" style="grid-template-columns: 1fr auto">
+                    <dt>Ставка</dt><dd class="text-end">{{ order.payment_display }}</dd>
+                    <dt>Одному за смену</dt><dd class="text-end num">{{ order.shift_amount|money }}</dd>
+                    <dt>Работников</dt><dd class="text-end num">{{ order.workers_needed }}</dd>
+                    <dt>ФОТ</dt><dd class="text-end num">{{ gmv|money }}</dd>
+                    <dt>Комиссия сервиса</dt><dd class="text-end num fw-semibold">{{ (order.commission or 0)|money }}
+                        {% if order.shift_amount %}<small class="text-body-secondary">({{ '%.1f'|format((order.commission or 0) / (order.shift_amount * order.workers_needed) * 100) }}%)</small>{% endif %}</dd>
+                    <dt>Предоплата</dt><dd class="text-end num">{{ prepayment_due|money }}</dd>
+                    <dt>Итого работодателю</dt><dd class="text-end num fw-bold">{{ order.total_cost|money }}</dd>
+                </dl>
+                <hr>
+                <div class="d-flex justify-content-between small mb-1"><span>Оплачено комиссии</span><span class="num">{{ paid|money }} / {{ (order.commission or 0)|money }}</span></div>
+                <div class="progress progress-thin mb-3"><div class="progress-bar bg-success" style="width: {{ ((paid / order.commission * 100) if order.commission else 0)|round }}%"></div></div>
+                {% for p in order.payments|sort(attribute='id') %}
+                <div class="d-flex justify-content-between align-items-center border rounded-3 p-2 mb-2">
+                    <div class="small">
+                        <div class="fw-semibold">{{ PAYMENT_TYPE_NAMES.get(p.payment_type, p.payment_type) }} · {{ p.amount|money }}</div>
+                        <div class="text-body-secondary">{{ p.created_at|dt('%d.%m %H:%M') }}{% if p.paid_at %} → {{ p.paid_at|dt('%d.%m %H:%M') }}{% endif %}</div>
+                    </div>
+                    <div class="text-end">
+                        {{ m.payment_badge(p.status) }}
+                        {% if p.status == 'pending' %}
+                        <form method="POST" action="{{ url_for('finance.mark_paid', payment_id=p.id) }}" class="mt-1">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="hidden" name="next" value="{{ url_for('orders.detail', order_id=order.id) }}">
+                            <button class="btn btn-sm btn-outline-success py-0">Оплачено</button>
+                        </form>
+                        {% endif %}
+                    </div>
+                </div>
+                {% else %}
+                <p class="small text-body-secondary mb-0">Платежей пока нет.</p>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-calendar-event me-1"></i> Даты</div>
+            <div class="card-body small">
+                <dl class="kv" style="grid-template-columns: 1fr auto">
+                    <dt>Создан</dt><dd>{{ order.created_at|dt }}</dd>
+                    <dt>Модерация</dt><dd>{{ order.moderated_at|dt }}</dd>
+                    <dt>Смена началась</dt><dd>{{ order.started_at|dt }}</dd>
+                    <dt>Смена завершена</dt><dd>{{ order.completed_at|dt }}</dd>
+                    <dt>Расчёт закрыт</dt><dd>{{ order.closed_at|dt }}</dd>
+                </dl>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header"><i class="bi bi-sliders me-1"></i> Ручная корректировка статуса</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('orders.update_status', order_id=order.id) }}" data-confirm="Изменить статус вручную? Уведомления при этом не отправляются.">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <select name="status" class="form-select mb-2">
+                        {% for key, name in status_names.items() %}
+                        <option value="{{ key }}" {% if key == order.status %}selected{% endif %}>{{ name }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-outline-secondary w-100">Сохранить</button>
+                </form>
+                <p class="small text-body-secondary mt-2 mb-0">Для обычной работы используйте кнопки «Следующий шаг» выше: они отправляют уведомления и ведут учёт платежей.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка с причиной -->
+<div class="modal fade" id="reasonModal" tabindex="-1">
+    <div class="modal-dialog">
+        <form class="modal-content" method="POST" id="reasonForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="modal-header"><h5 class="modal-title" id="reasonTitle">Причина</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <label class="form-label">Причина (увидит работодатель)</label>
+                <textarea class="form-control" name="reason" rows="3" required></textarea>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Назад</button>
+                <button type="submit" class="btn btn-danger">Подтвердить</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.getElementById('reasonModal').addEventListener('show.bs.modal', function (e) {
+    document.getElementById('reasonForm').action = e.relatedTarget.dataset.action;
+    document.getElementById('reasonTitle').textContent = e.relatedTarget.dataset.title;
+});
+</script>
+{% endblock %}

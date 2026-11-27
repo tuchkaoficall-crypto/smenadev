@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+
+{% block title %}Модерация — СМЕНА{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div><h1>Очередь модерации</h1>
+        <div class="sub">Всё, что ждёт решения администратора, в одном месте. Старые заявки сверху.</div></div>
+</div>
+
+<div class="kpi-grid">
+    {{ m.kpi('bi-clipboard-plus', 'Заявки на модерации', orders|length, None, None, 'primary') }}
+    {{ m.kpi('bi-building', 'Анкеты работодателей', employers|length, None, None, 'warning') }}
+    {{ m.kpi('bi-hand-index', 'Отклики работников', responses|length, None, None, 'info') }}
+    {{ m.kpi('bi-person-vcard', 'Документы на проверке', documents|length, None, None, 'teal') }}
+</div>
+
+<div class="card mb-4" id="documents">
+    <div class="card-header"><i class="bi bi-person-vcard me-1"></i> Документы работников ({{ documents|length }})</div>
+    {% if documents %}
+    <div class="table-responsive">
+        <table class="table align-middle">
+            <thead><tr><th class="ps-3">Работник</th><th>Документ</th><th>Загружен</th><th>Файл</th><th class="text-end pe-3">Решение</th></tr></thead>
+            <tbody>
+            {% for d in documents %}
+            <tr>
+                <td class="ps-3"><a href="{{ url_for('workers.detail', worker_id=d.worker_id) }}" class="fw-semibold text-decoration-none">{{ d.worker.user.full_name if d.worker and d.worker.user else d.worker_id }}</a>
+                    <div class="small text-body-secondary">{{ d.worker.city if d.worker else '' }} · смен {{ d.worker.completed_shifts if d.worker else 0 }}</div></td>
+                <td>{{ DOCUMENT_TYPES.get(d.doc_type, d.doc_type) }}</td>
+                <td class="small">{{ d.created_at|dt }}</td>
+                <td><a href="{{ url_for('workers.document_file', doc_id=d.id) }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary"><i class="bi bi-eye"></i> Открыть</a></td>
+                <td class="text-end pe-3 text-nowrap">
+                    <form method="POST" action="{{ url_for('workers.document_review', doc_id=d.id, action='approve') }}" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="next" value="{{ url_for('moderation.index') }}#documents">
+                        <button class="btn btn-sm btn-success" title="Подтвердить"><i class="bi bi-check-lg"></i></button>
+                    </form>
+                    <form method="POST" action="{{ url_for('workers.document_review', doc_id=d.id, action='reject') }}" class="d-inline-flex gap-1">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="next" value="{{ url_for('moderation.index') }}#documents">
+                        <input type="text" name="reason" class="form-control form-control-sm" placeholder="Причина отказа" style="width: 160px">
+                        <button class="btn btn-sm btn-outline-danger" title="Отклонить"><i class="bi bi-x-lg"></i></button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty"><i class="bi bi-person-vcard"></i>Новых документов нет</div>
+    {% endif %}
+</div>
+
+<div class="card mb-4" id="orders">
+    <div class="card-header"><i class="bi bi-clipboard-plus me-1"></i> Заявки на модерации ({{ orders|length }})</div>
+    {% if orders %}
+    <div class="table-responsive"><table class="table align-middle">
+        <thead><tr><th class="ps-3">№</th><th>Компания</th><th>Работа</th><th>Смена</th><th class="text-end">Оплата</th><th class="text-end">Подана</th><th class="text-end pe-3"></th></tr></thead>
+        <tbody>
+        {% for o in orders %}
+        <tr>
+            <td class="ps-3"><a href="{{ url_for('orders.detail', order_id=o.id) }}" class="fw-semibold">#{{ o.id }}</a></td>
+            <td>{{ o.employer.company_name if o.employer else '—' }}{% if o.employer and o.employer.status != 'approved' %} {{ m.employer_badge(o.employer.status) }}{% endif %}</td>
+            <td><div class="fw-semibold">{{ o.category }} × {{ o.workers_needed }}</div><div class="small text-body-secondary">{{ o.description|truncate(70) }}</div></td>
+            <td class="small text-nowrap">{{ o.shift_date|dt('%d.%m %H:%M') }} · {{ o.shift_duration }} ч</td>
+            <td class="text-end small text-nowrap">{{ o.payment_display }}</td>
+            <td class="text-end small text-body-secondary text-nowrap">{{ o.created_at|dt('%d.%m %H:%M') }}</td>
+            <td class="text-end pe-3 text-nowrap">
+                <form method="POST" action="{{ url_for('orders.approve', order_id=o.id) }}" class="d-inline" data-confirm="Одобрить заявку #{{ o.id }} и разослать работникам?">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-success"><i class="bi bi-check-lg"></i> Одобрить</button>
+                </form>
+                <a href="{{ url_for('orders.detail', order_id=o.id) }}" class="btn btn-sm btn-outline-secondary">Открыть</a>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody></table></div>
+    {% else %}<div class="empty"><i class="bi bi-check2-circle"></i>Все заявки обработаны</div>{% endif %}
+</div>
+
+<div class="card mb-4" id="employers">
+    <div class="card-header"><i class="bi bi-building me-1"></i> Анкеты работодателей ({{ employers|length }})</div>
+    {% if employers %}
+    <div class="table-responsive"><table class="table align-middle">
+        <thead><tr><th class="ps-3">Компания</th><th>ИНН</th><th>Контакт</th><th>Описание</th><th class="text-end">Подана</th><th class="text-end pe-3"></th></tr></thead>
+        <tbody>
+        {% for e in employers %}
+        <tr>
+            <td class="ps-3"><a href="{{ url_for('employers.detail', employer_id=e.id) }}" class="fw-semibold">{{ e.company_name }}</a></td>
+            <td class="small">{{ e.inn or '—' }}</td>
+            <td class="small">{{ e.contact_person }}<br>{{ e.contact_phone }}</td>
+            <td class="small text-body-secondary">{{ (e.company_description or '')|truncate(80) }}</td>
+            <td class="text-end small text-body-secondary text-nowrap">{{ e.created_at|dt('%d.%m %H:%M') }}</td>
+            <td class="text-end pe-3 text-nowrap">
+                <form method="POST" action="{{ url_for('employers.approve', employer_id=e.id) }}" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="next" value="{{ url_for('moderation.index') }}">
+                    <button class="btn btn-sm btn-success"><i class="bi bi-check-lg"></i> Одобрить</button>
+                </form>
+                <a href="{{ url_for('employers.detail', employer_id=e.id) }}" class="btn btn-sm btn-outline-secondary">Открыть</a>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody></table></div>
+    {% else %}<div class="empty"><i class="bi bi-check2-circle"></i>Новых анкет нет</div>{% endif %}
+</div>
+
+<div class="card" id="responses">
+    <div class="card-header"><i class="bi bi-hand-index me-1"></i> Отклики работников ({{ responses|length }})</div>
+    {% if responses %}
+    <div class="table-responsive"><table class="table align-middle">
+        <thead><tr><th class="ps-3">Работник</th><th>Рейтинг</th><th>Заказ</th><th>Набор</th><th>Статус</th><th class="text-end pe-3"></th></tr></thead>
+        <tbody>
+        {% for r in responses %}
+        {% set full = confirmed[r.order_id] >= r.order.workers_needed %}
+        <tr>
+            <td class="ps-3"><a href="{{ url_for('workers.detail', worker_id=r.worker_id) }}" class="fw-semibold">{{ r.worker.user.full_name if r.worker and r.worker.user else r.worker_id }}</a>
+                <div class="small text-body-secondary">{{ r.worker.completed_shifts if r.worker else 0 }} смен · {{ r.created_at|dt('%d.%m %H:%M') }}</div></td>
+            <td>{% if r.worker and r.worker.total_reviews %}{{ m.stars(r.worker.rating) }}{% else %}<small class="text-body-secondary">новичок</small>{% endif %}</td>
+            <td><a href="{{ url_for('orders.detail', order_id=r.order_id) }}">#{{ r.order_id }} {{ r.order.category }}</a>
+                <div class="small text-body-secondary">{{ r.order.employer.company_name if r.order.employer else '' }} · {{ r.order.shift_date|dt('%d.%m %H:%M') }}</div></td>
+            <td class="num small">{{ confirmed[r.order_id] }} / {{ r.order.workers_needed }}</td>
+            <td>{{ m.response_badge(r.status) }}</td>
+            <td class="text-end pe-3 text-nowrap">
+                <form method="POST" action="{{ url_for('orders.response_action', response_id=r.id, action='confirm') }}" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="next" value="{{ url_for('moderation.index') }}#responses">
+                    <button class="btn btn-sm btn-success" title="Подтвердить" {% if full %}disabled title="Набор уже закрыт"{% endif %}><i class="bi bi-check-lg"></i></button>
+                </form>
+                <form method="POST" action="{{ url_for('orders.response_action', response_id=r.id, action='reject') }}" class="d-inline" data-confirm="Отклонить отклик?">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="next" value="{{ url_for('moderation.index') }}#responses">
+                    <button class="btn btn-sm btn-outline-danger" title="Отклонить"><i class="bi bi-x-lg"></i></button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody></table></div>
+    {% else %}<div class="empty"><i class="bi bi-check2-circle"></i>Новых откликов нет</div>{% endif %}
+</div>
+{% endblock %}

@@ -1,25 +1,36 @@
 """
 Обработчики команды /start и выбора роли
 """
+import logging
+
 from aiogram import Router, F
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 
 from database import async_session
-from services import UserService
+from services import UserService, WorkerService, EmployerService
 from bot.keyboards import reply, inline
 from bot.states import WorkerRegistration
-from config import UserRole, CHANNEL_ID
+from bot.utils import referrals
+from config import UserRole, CHANNEL_ID, ADMIN_CONTACT, REFERRAL_BONUS
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-    """Обработка команды /start"""
+    """Обработка команды /start (в том числе по реферальной ссылке /start ref_<id>)"""
     await state.clear()
-    
+
+    referrer_id = referrals.parse_payload(message.text)
+    if referrer_id:
+        try:
+            await referrals.register_invite(message.from_user.id, referrer_id)
+        except Exception:
+            logger.exception("Не удалось записать приглашение")
+
     async with async_session() as session:
         user = await UserService.get_user(session, message.from_user.id)
         
@@ -29,6 +40,25 @@ async def cmd_start(message: Message, state: FSMContext):
                 "Для получения подробной информации обратитесь к администратору."
             )
             return
+        
+        if user and user.role == UserRole.WORKER:
+            worker = await WorkerService.get_worker(session, user.id)
+            if not worker:
+                # Роль выбрана, но регистрация не была завершена
+                await message.answer(
+                    "👷 Давайте завершим регистрацию работника.\n\n"
+                    "Выберите ваш город:",
+                    reply_markup=inline.get_cities_keyboard()
+                )
+                await state.set_state(WorkerRegistration.city)
+                return
+        
+        if user and user.role == UserRole.EMPLOYER:
+            employer = await EmployerService.get_employer(session, user.id)
+            if not employer:
+                from bot.handlers.employer import start_employer_registration
+                await start_employer_registration(message, state, user_id=user.id)
+                return
         
         if user and user.role:
             await send_main_menu(message, user.role)
@@ -142,7 +172,8 @@ async def choose_employer_role(callback: CallbackQuery, state: FSMContext):
     
     # Импортируем здесь, чтобы избежать циклических импортов
     from bot.handlers.employer import start_employer_registration
-    await start_employer_registration(callback.message, state)
+    # callback.message отправлено ботом, поэтому передаём id пользователя явно
+    await start_employer_registration(callback.message, state, user_id=callback.from_user.id)
 
 
 @router.callback_query(F.data == "role_worker")
@@ -196,10 +227,64 @@ async def send_main_menu(message: Message, role: str):
         )
 
 
+@router.message(Command("cancel"))
+@router.message(F.text == "❌ Отмена")
+async def cmd_cancel(message: Message, state: FSMContext):
+    """Отмена текущего действия (сброс FSM)"""
+    current_state = await state.get_state()
+    await state.clear()
+    
+    async with async_session() as session:
+        user = await UserService.get_user(session, message.from_user.id)
+    
+    text = "❌ Действие отменено." if current_state else "Нечего отменять."
+    
+    if user and user.role:
+        await message.answer(text)
+        await send_main_menu(message, user.role)
+    else:
+        await message.answer(
+            f"{text}\n\nНажмите /start, чтобы начать.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+
+@router.message(Command("support"))
+async def cmd_support(message: Message):
+    """Связь с поддержкой"""
+    await message.answer(
+        "💬 <b>Поддержка СМЕНА</b>\n\n"
+        f"По любым вопросам пишите администратору: {ADMIN_CONTACT}",
+        parse_mode="HTML"
+    )
+
+
+@router.message(Command("profile"))
+async def cmd_profile(message: Message, state: FSMContext):
+    """Профиль пользователя в зависимости от роли"""
+    await state.clear()
+    
+    async with async_session() as session:
+        user = await UserService.get_user(session, message.from_user.id)
+    
+    if not user or not user.role:
+        await message.answer("Вы ещё не зарегистрированы. Нажмите /start, чтобы начать.")
+        return
+    
+    if user.role == UserRole.WORKER:
+        from bot.handlers.worker import show_worker_profile
+        await show_worker_profile(message)
+    elif user.role == UserRole.EMPLOYER:
+        from bot.handlers.employer import show_employer_profile
+        await show_employer_profile(message)
+    else:
+        await send_main_menu(message, user.role)
+
+
+@router.message(Command("help"))
 @router.message(F.text == "❓ Помощь")
 async def cmd_help(message: Message):
     """Команда помощи"""
-    from config import ADMIN_CONTACT
     
     async with async_session() as session:
         user = await UserService.get_user(session, message.from_user.id)
@@ -218,14 +303,16 @@ async def cmd_help(message: Message):
             help_text = (
                 "ℹ️ <b>Справка для работодателей</b>\n\n"
                 "✅ <b>Как это работает:</b>\n"
-                "1. Создайте заявку на подбор работников\n"
-                "2. Дождитесь модерации\n"
-                "3. Мы найдем подходящих кандидатов\n"
-                "4. Вы подтвердите выбранных исполнителей\n"
-                "5. Внесете предоплату\n"
-                "6. Работники выходят на смену\n"
-                "7. Оплатите услугу после завершения\n\n"
-                "💰 <b>Комиссия:</b> 5-12.5% в зависимости от суммы\n\n"
+                "1. «➕ Создать заявку»: 2–3 минуты, в конце вы проверите заявку целиком\n"
+                "2. Администратор проверяет заявку (обычно до часа)\n"
+                "3. Вакансию получают подходящие работники, о каждом подтверждённом мы сообщим\n"
+                "4. После набора — предоплата части комиссии (кнопка «✅ Я оплатил»)\n"
+                "5. За сутки до смены пришлём напоминание и сводку набора\n"
+                "6. После смены нажмите «🏁 Смена завершена» и оцените работников\n"
+                "7. Администратор закрывает расчёт\n\n"
+                "Все заявки и их статус — в «📋 Мои заявки». Там же можно отменить заявку "
+                "или повторить прошлую в один клик (🔁).\n\n"
+                "💰 <b>Комиссия:</b> 5% (смена до 2 500 ₽), 10%, 12,5% (свыше 4 500 ₽) с каждого работника\n\n"
                 f"📞 <b>Вопросы:</b> {ADMIN_CONTACT}"
             )
         else:  # WORKER
@@ -235,12 +322,36 @@ async def cmd_help(message: Message):
                 "1. Укажите город и категории работы\n"
                 "2. Получайте уведомления о новых вакансиях\n"
                 "3. Откликайтесь на подходящие предложения\n"
-                "4. Администратор свяжется с вами\n"
-                "5. Выходите на смену\n"
-                "6. Получайте оплату от работодателя\n"
-                "7. Получите положительный отзыв\n\n"
+                "4. Когда вас подтвердят, придёт сообщение с адресом и временем\n"
+                "5. За сутки и за 2 часа напомним о смене, нажмите «👍 Буду на смене»\n"
+                "6. Не получается выйти? Откажитесь заранее в «📝 Мои отклики»\n"
+                "7. После смены работодатель оценит вашу работу\n\n"
                 "⭐️ Копите рейтинг для повышения доверия!\n\n"
                 f"📞 <b>Вопросы:</b> {ADMIN_CONTACT}"
             )
         
         await message.answer(help_text, parse_mode="HTML")
+
+
+@router.message(Command("invite"))
+@router.message(F.text == "🎁 Пригласить друга")
+async def invite_friend(message: Message):
+    """Реферальная ссылка и статистика приглашений"""
+    async with async_session() as session:
+        user = await UserService.get_user(session, message.from_user.id)
+    if not user or not user.role:
+        await message.answer("Сначала зарегистрируйтесь: нажмите /start.")
+        return
+    link = await referrals.invite_link(message.from_user.id)
+    st = await referrals.stats(message.from_user.id)
+    await message.answer(
+        "🎁 <b>Приглашайте друзей в СМЕНУ</b>\n\n"
+        f"За каждого друга, который выполнит первую смену (или работодателя, у которого "
+        f"завершится первый заказ), вы получите <b>{REFERRAL_BONUS:.0f} ₽</b>.\n\n"
+        f"Ваша ссылка:\n<code>{link}</code>\n\n"
+        f"👥 Пришло по ссылке: {st['invited']}\n"
+        f"✅ Стали активными: {st['qualified']}\n"
+        f"💰 Начислено: {st['earned']:.0f} ₽ · выплачено: {st['paid']:.0f} ₽",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )

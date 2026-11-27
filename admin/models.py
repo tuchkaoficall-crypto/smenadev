@@ -17,6 +17,11 @@ class AdminUser(UserMixin):
         """Проверка логина и пароля"""
         from config import ADMIN_USERNAME, ADMIN_PASSWORD
         
-        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+        import hmac
+        if (
+            username and password
+            and hmac.compare_digest(username.encode(), ADMIN_USERNAME.encode())
+            and hmac.compare_digest(password.encode(), ADMIN_PASSWORD.encode())
+        ):
             return AdminUser(id=1, username=username)
         return None

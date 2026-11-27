@@ -32,13 +32,20 @@ class Worker(Base):
     quality_rating = Column(Float, default=0.0)
     communication_rating = Column(Float, default=0.0)
     
+    # Проверка документов: дата подтверждения паспорта администратором (добавлено 27.11.2026)
+    verified_at = Column(DateTime, nullable=True)
+
     # Даты
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    user = relationship("User", backref="worker_profile", foreign_keys=[user_id])
+    user = relationship("User", backref="worker_profile", foreign_keys=[user_id], lazy="selectin")
     
+    @property
+    def is_verified(self):
+        return self.verified_at is not None
+
     def __repr__(self):
         return f"<Worker {self.user_id}: ★{self.rating:.1f} ({self.completed_shifts} shifts)>"
     
