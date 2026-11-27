@@ -52,8 +52,8 @@ def get_employer_menu() -> ReplyKeyboardMarkup:
     builder.button(text="👔 Мой профиль")
     builder.button(text="🎁 Пригласить друга")
     builder.button(text="❓ Помощь")
-    builder.adjust(2)
-    return builder.as_markup(resize_keyboard=True)
+    builder.adjust(1, 2, 2)
+    return builder.as_markup(resize_keyboard=True, is_persistent=True, input_field_placeholder="Выберите действие в меню")
 
 
 def get_worker_menu() -> ReplyKeyboardMarkup:
@@ -64,8 +64,8 @@ def get_worker_menu() -> ReplyKeyboardMarkup:
     builder.button(text="👤 Мой профиль")
     builder.button(text="🎁 Пригласить друга")
     builder.button(text="❓ Помощь")
-    builder.adjust(2)
-    return builder.as_markup(resize_keyboard=True)
+    builder.adjust(1, 2, 2)
+    return builder.as_markup(resize_keyboard=True, is_persistent=True, input_field_placeholder="Выберите действие в меню")
 
 
 def get_payment_type_keyboard() -> ReplyKeyboardMarkup:

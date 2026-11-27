@@ -63,6 +63,32 @@ async def run_reminders(now: datetime = None) -> int:
     return sent
 
 
+async def _send_once(session, order_id, kind, chat_id, text, rows=None, *, legacy_user_id=0):
+    """Record successful delivery only; failed sends remain eligible for retry.
+
+    Keep recognizing old event keys to avoid resending historical reminders.
+    A crash after Telegram accepts a message but before commit can cause a duplicate.
+    """
+    if await L.has_event(session, order_id, kind, legacy_user_id):
+        return 0
+    delivery_kind = "delivery:" + kind
+    if await L.has_event(session, order_id, delivery_kind, chat_id):
+        return 0
+    if not await L.send(chat_id, text, rows):
+        return 0
+    await L.add_event(session, order_id, delivery_kind, chat_id)
+    return 1
+
+
+async def _send_admins_once(session, order, kind, header):
+    from config import ADMIN_IDS
+    text, rows = await L.admin_card(session, order)
+    sent = 0
+    for chat_id in ADMIN_IDS:
+        sent += await _send_once(session, order.id, kind, chat_id, header + "\n\n" + text, rows)
+    return sent
+
+
 async def _process(session, order, now) -> int:
     sent = 0
     hours_left = (order.shift_date - now).total_seconds() / 3600
@@ -71,73 +97,66 @@ async def _process(session, order, now) -> int:
     employer_chat = order.employer.user_id
 
     if order.status in BEFORE_START and hours_left > 0:
-        # За сутки (или сразу, если смена ближе): каждому подтверждённому один раз
         if hours_left > 2:
             for r in confirmed:
-                if await L.add_event(session, order.id, "remind_24h", r.worker.user_id):
-                    sent += await L.send(r.worker.user_id, T.worker_reminder(order, now),
-                                         K.worker_reminder_rows(r.id))
-            if await L.add_event(session, order.id, "remind_24h_employer"):
-                sent += await L.send(employer_chat, T.employer_reminder(order, len(confirmed), now),
+                sent += await _send_once(session, order.id, "remind_24h", r.worker.user_id,
+                                         T.worker_reminder(order, now), K.worker_reminder_rows(r.id),
+                                         legacy_user_id=r.worker.user_id)
+            sent += await _send_once(session, order.id, "remind_24h_employer", employer_chat,
+                                     T.employer_reminder(order, len(confirmed), now),
                                      K.employer_card_rows(order.id))
         else:
-            if confirmed and await L.add_event(session, order.id, "remind_2h_employer"):
-                sent += await L.send(employer_chat, T.employer_reminder_2h(order, len(confirmed), now),
-                                     K.employer_card_rows(order.id))
+            if confirmed:
+                sent += await _send_once(session, order.id, "remind_2h_employer", employer_chat,
+                                         T.employer_reminder_2h(order, len(confirmed), now),
+                                         K.employer_card_rows(order.id))
             for r in confirmed:
-                if await L.add_event(session, order.id, "remind_2h", r.worker.user_id):
-                    attended = await L.has_event(session, order.id, "attend_ok", r.worker.user_id)
-                    rows = None if attended else K.worker_reminder_rows(r.id)
-                    sent += await L.send(r.worker.user_id, T.worker_reminder(order, now), rows)
+                attended = await L.has_event(session, order.id, "attend_ok", r.worker.user_id)
+                rows = None if attended else K.worker_reminder_rows(r.id)
+                sent += await _send_once(session, order.id, "remind_2h", r.worker.user_id,
+                                         T.worker_reminder(order, now), rows,
+                                         legacy_user_id=r.worker.user_id)
+        if len(confirmed) < order.workers_needed:
+            sent += await _send_admins_once(session, order, "admin_understaffed",
+                f"⚠️ <b>Недобор</b>: до смены {hours_left:.0f} ч, подтверждено "
+                f"{len(confirmed)} из {order.workers_needed}.")
 
-        if len(confirmed) < order.workers_needed and await L.add_event(session, order.id, "admin_understaffed"):
-            await L.notify_admins_card(
-                order.id, f"⚠️ <b>Недобор</b>: до смены {hours_left:.0f} ч, подтверждено "
-                          f"{len(confirmed)} из {order.workers_needed}.")
-            sent += 1
-
-    # Отметка «я на месте»: кнопка перед началом и сводка тем, кто не отметился
     in_shift = order.status in C.CHECKIN_STATUSES and now < end
     if in_shift and confirmed and hours_left <= CHECKIN_PROMPT_MINUTES / 60:
         here = await C.checked_in_worker_ids(session, order.id)
         for r in confirmed:
-            if r.worker_id not in here and await L.add_event(session, order.id, "checkin_prompt", r.worker.user_id):
-                sent += await L.send(r.worker.user_id, T.worker_checkin_prompt(order, now),
-                                     K.worker_checkin_rows(r.id))
+            if r.worker_id not in here:
+                sent += await _send_once(session, order.id, "checkin_prompt", r.worker.user_id,
+                                         T.worker_checkin_prompt(order, now), K.worker_checkin_rows(r.id),
+                                         legacy_user_id=r.worker.user_id)
         missing = [T.worker_name(r.worker) for r in confirmed if r.worker_id not in here]
-        late = hours_left <= -CHECKIN_GRACE_MINUTES / 60
-        if missing and late and await L.add_event(session, order.id, "no_checkin_alert"):
+        if missing and hours_left <= -CHECKIN_GRACE_MINUTES / 60:
             text = T.no_checkin_alert(order, missing)
-            sent += await L.send(employer_chat, text, K.employer_card_rows(order.id))
-            await L.notify_admins_card(order.id, text + "\nЕсли работник не пришёл, отметьте неявку "
-                                                        "в карточке заказа в веб-панели.")
+            sent += await _send_once(session, order.id, "no_checkin_alert", employer_chat,
+                                     text, K.employer_card_rows(order.id))
+            sent += await _send_admins_once(session, order, "no_checkin_alert",
+                text + "\nЕсли работник не пришёл, отметьте неявку в карточке заказа в веб-панели.")
 
-    # Смена должна была начаться
     if order.status in BEFORE_START and hours_left <= -0.25:
-        if confirmed and await L.add_event(session, order.id, "admin_not_started"):
-            await L.notify_admins_card(order.id, "⏰ Смена должна была начаться 15 минут назад, "
-                                                 "но не отмечена начавшейся.")
-            sent += 1
-        elif not confirmed and await L.add_event(session, order.id, "admin_nobody"):
-            await L.notify_admins_card(order.id, "🚨 Смена уже началась, а подтверждённых работников нет. "
-                                                 "Отменить заказ или срочно найти людей?")
-            sent += 1
+        if confirmed:
+            sent += await _send_admins_once(session, order, "admin_not_started",
+                "⏰ Смена должна была начаться 15 минут назад, но не отмечена начавшейся.")
+        else:
+            sent += await _send_admins_once(session, order, "admin_nobody",
+                "🚨 Смена уже началась, а подтверждённых работников нет. Отменить заказ или срочно найти людей?")
 
-    # Смена должна была закончиться
     active = order.status in BEFORE_START + (OrderStatus.SHIFT_STARTED,)
     if active and confirmed and now >= end:
-        if await L.add_event(session, order.id, "ask_complete"):
-            sent += await L.send(employer_chat, T.employer_shift_should_be_over(order),
-                                 K.employer_done_rows(order.id))
-            await L.notify_admins_card(order.id, "🏁 Время смены вышло. Ждём подтверждения завершения "
-                                                 "от работодателя или завершите смену сами.")
+        sent += await _send_once(session, order.id, "ask_complete", employer_chat,
+                                 T.employer_shift_should_be_over(order), K.employer_done_rows(order.id))
+        sent += await _send_admins_once(session, order, "ask_complete",
+            "🏁 Время смены вышло. Ждём подтверждения завершения от работодателя или завершите смену сами.")
 
-    # Напомнить оценить работников
     if order.status == OrderStatus.SHIFT_COMPLETED and order.completed_at \
             and datetime.utcnow() - order.completed_at >= timedelta(hours=24):
-        if await L.unrated_workers(session, order) and await L.add_event(session, order.id, "remind_rate"):
-            sent += await L.send(employer_chat, T.employer_rate_reminder(order),
-                                 [[("⭐️ Оценить работников", f"eo:rate:{order.id}")]])
+        if await L.unrated_workers(session, order):
+            sent += await _send_once(session, order.id, "remind_rate", employer_chat,
+                T.employer_rate_reminder(order), [[("⭐️ Оценить работников", f"eo:rate:{order.id}")]])
     return sent
 
 

@@ -224,10 +224,10 @@ async def start_worker_registration(message: Message, state: FSMContext):
 # ==== Поиск работы ====
 
 @router.message(F.text == "🔍 Найти работу")
-async def find_jobs(message: Message):
-    """Поиск доступных вакансий"""
+async def find_jobs(message: Message, page: int = 0, user_id: int = None):
+    """Поиск вакансий небольшими страницами."""
     async with async_session() as session:
-        worker = await WorkerService.get_worker(session, message.from_user.id)
+        worker = await WorkerService.get_worker(session, user_id or message.from_user.id)
         
         if not worker:
             await message.answer(
@@ -271,20 +271,20 @@ async def find_jobs(message: Message):
             )
             return
         
+        page_size = 5
+        pages = (len(unique_orders) + page_size - 1) // page_size
+        page = max(0, min(page, pages - 1))
         await message.answer(
-            f"🔍 Найдено вакансий: {len(unique_orders)}\n\n"
-            "Просмотрите доступные предложения:",
-            reply_markup=reply.get_worker_menu()
+            f"🔎 <b>Работа в городе {escape(worker.city)}</b>\n"
+            f"Предложений: <b>{len(unique_orders)}</b> · Страница {page + 1}/{pages}\n\n"
+            "Ближайшие смены — первыми. Выберите вакансию и нажмите «Откликнуться».",
+            parse_mode="HTML", reply_markup=reply.get_worker_menu()
         )
+        responses = await ResponseService.get_worker_responses(session, worker.id)
+        responded = {r.order_id for r in responses}
         
-        for order in unique_orders[:20]:
-            # Проверяем, откликнулся ли уже работник
-            has_responded = await ResponseService.has_responded(
-                session,
-                worker.id,
-                order.id
-            )
-            
+        for order in unique_orders[page * page_size:(page + 1) * page_size]:
+            has_responded = order.id in responded
             text = f"📌 <b>Вакансия #{order.id}</b>\n\n{T.order_details(order)}"
 
             if has_responded:
@@ -296,6 +296,26 @@ async def find_jobs(message: Message):
                     parse_mode="HTML",
                     reply_markup=inline.get_response_button(order.id)
                 )
+
+
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        navigation = InlineKeyboardBuilder()
+        if page:
+            navigation.button(text="← Назад", callback_data=f"jobs:page:{page - 1}")
+        if page + 1 < pages:
+            navigation.button(text="Далее →", callback_data=f"jobs:page:{page + 1}")
+        navigation.adjust(2)
+        navigation.row()
+        from aiogram.types import InlineKeyboardButton
+        navigation.row(InlineKeyboardButton(text="↻ Обновить вакансии", callback_data=f"jobs:page:{page}"))
+        await message.answer("Продолжить поиск 👇", reply_markup=navigation.as_markup())
+
+
+@router.callback_query(F.data.regexp(r"^jobs:page:\d+$"))
+async def jobs_page(callback: CallbackQuery):
+    await callback.answer()
+    await find_jobs(callback.message, page=int(callback.data.rsplit(":", 1)[1]),
+                    user_id=callback.from_user.id)
 
 
 @router.callback_query(F.data.startswith("respond:"))
@@ -333,12 +353,16 @@ async def process_response(callback: CallbackQuery):
             return
         
         # Создаем отклик
-        response = await ResponseService.create_response(
+        response, created = await ResponseService.create_response_once(
             session,
             order_id=order_id,
             worker_id=worker.id
         )
         
+        if not created:
+            await callback.answer("Вы уже откликнулись на эту вакансию", show_alert=True)
+            return
+
         # Уведомляем администраторов
         try:
             from bot.utils.notifications import notify_admins_new_response

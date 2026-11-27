@@ -1,11 +1,16 @@
 """
 Сервис для работы с откликами
 """
+import asyncio
+from weakref import WeakValueDictionary
 from datetime import datetime
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from database.models import Response, Order, Worker
 from config import ResponseStatus
+
+
+_response_locks = WeakValueDictionary()
 
 
 class ResponseService:
@@ -17,25 +22,33 @@ class ResponseService:
         order_id: int,
         worker_id: int
     ) -> Response:
-        """Создать отклик на заказ"""
-        # Проверяем, нет ли уже отклика от этого работника
-        existing = await ResponseService.get_response_by_worker_and_order(
-            session, worker_id, order_id
-        )
-        
-        if existing:
-            return existing
-        
-        response = Response(
-            order_id=order_id,
-            worker_id=worker_id,
-            status=ResponseStatus.PENDING
-        )
-        session.add(response)
-        await session.commit()
-        await session.refresh(response)
+        """Создать отклик, вернув существующий при повторном запросе."""
+        response, _ = await ResponseService.create_response_once(session, order_id, worker_id)
         return response
-    
+
+    @staticmethod
+    async def create_response_once(session, order_id, worker_id):
+        """Serialize duplicate requests within this bot process.
+
+        Multiple processes still require a database uniqueness constraint.
+        """
+        key = (order_id, worker_id)
+        lock = _response_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            _response_locks[key] = lock
+        async with lock:
+            existing = await ResponseService.get_response_by_worker_and_order(
+                session, worker_id, order_id)
+            if existing:
+                return existing, False
+            response = Response(order_id=order_id, worker_id=worker_id,
+                                status=ResponseStatus.PENDING)
+            session.add(response)
+            await session.commit()
+            await session.refresh(response)
+            return response, True
+
     @staticmethod
     async def get_response(session: AsyncSession, response_id: int) -> Response:
         """Получить отклик по ID"""

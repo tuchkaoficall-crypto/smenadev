@@ -67,44 +67,19 @@ class WorkerService:
         return False
     
     @staticmethod
-    async def update_rating(
-        session: AsyncSession,
-        worker_id: int,
-        new_rating: float,
-        punctuality: float = None,
-        responsibility: float = None,
-        quality: float = None,
-        communication: float = None
-    ) -> bool:
-        """Обновить рейтинг работника"""
+    async def recalculate_rating(session: AsyncSession, worker_id: int) -> bool:
+        """Recalculate from persisted reviews within the caller's transaction."""
+        from database.models import Review
+        from services.ratings import apply_review_ratings
         worker = await WorkerService.get_worker_by_id(session, worker_id)
-        if worker:
-            # Пересчитываем средний рейтинг
-            total = worker.rating * worker.total_reviews
-            worker.total_reviews += 1
-            worker.rating = (total + new_rating) / worker.total_reviews
-            
-            # Обновляем критерии
-            if punctuality is not None:
-                total_punct = worker.punctuality_rating * (worker.total_reviews - 1)
-                worker.punctuality_rating = (total_punct + punctuality) / worker.total_reviews
-            
-            if responsibility is not None:
-                total_resp = worker.responsibility_rating * (worker.total_reviews - 1)
-                worker.responsibility_rating = (total_resp + responsibility) / worker.total_reviews
-            
-            if quality is not None:
-                total_qual = worker.quality_rating * (worker.total_reviews - 1)
-                worker.quality_rating = (total_qual + quality) / worker.total_reviews
-            
-            if communication is not None:
-                total_comm = worker.communication_rating * (worker.total_reviews - 1)
-                worker.communication_rating = (total_comm + communication) / worker.total_reviews
-            
-            await session.commit()
-            return True
-        return False
-    
+        if worker is None:
+            return False
+        reviews = (await session.execute(
+            select(Review).where(Review.worker_id == worker_id, Review.is_hidden.is_(False))
+        )).scalars().all()
+        apply_review_ratings(worker, reviews)
+        return True
+
     @staticmethod
     async def increment_completed_shifts(session: AsyncSession, worker_id: int) -> bool:
         """Увеличить счетчик завершенных смен"""
