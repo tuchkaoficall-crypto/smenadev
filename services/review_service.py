@@ -46,17 +46,8 @@ class ReviewService:
         session.add(review)
         await session.flush()
         
-        # Обновляем рейтинг работника
-        await WorkerService.update_rating(
-            session,
-            worker_id,
-            rating,
-            punctuality,
-            responsibility,
-            quality,
-            communication
-        )
-        
+        await WorkerService.recalculate_rating(session, worker_id)
+
         await session.commit()
         await session.refresh(review)
         return review
@@ -128,6 +119,7 @@ class ReviewService:
         if review:
             review.is_hidden = True
             review.hidden_reason = reason
+            await WorkerService.recalculate_rating(session, review.worker_id)
             await session.commit()
             return True
         return False
@@ -139,6 +131,7 @@ class ReviewService:
         if review:
             review.is_hidden = False
             review.hidden_reason = None
+            await WorkerService.recalculate_rating(session, review.worker_id)
             await session.commit()
             return True
         return False

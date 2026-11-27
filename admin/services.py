@@ -177,8 +177,8 @@ def confirm_response(response):
     if response.status not in (ResponseStatus.PENDING, ResponseStatus.CONTACTED):
         raise LifecycleError("Отклик уже обработан")
     order = response.order
-    if order.status in FINAL_STATUSES:
-        raise LifecycleError("Заказ уже закрыт или отменён")
+    if order.status not in (OrderStatus.SEARCH_WORKERS, OrderStatus.CONFIRM_WORKERS, OrderStatus.PREPAYMENT):
+        raise LifecycleError("По этому заказу набор уже не идёт")
     confirmed = confirmed_count(order)
     if confirmed >= order.workers_needed:
         raise LifecycleError(f"Уже подтверждено {confirmed} из {order.workers_needed}")
@@ -392,17 +392,8 @@ def recalc_worker_rating(worker):
     reviews = db_session.query(Review).filter(
         Review.worker_id == worker.id, Review.is_hidden.is_(False)
     ).all()
-    worker.total_reviews = len(reviews)
-
-    def avg(attr):
-        vals = [getattr(r, attr) for r in reviews if getattr(r, attr) is not None]
-        return sum(vals) / len(vals) if vals else 0.0
-
-    worker.rating = avg("rating")
-    worker.punctuality_rating = avg("punctuality")
-    worker.responsibility_rating = avg("responsibility")
-    worker.quality_rating = avg("quality")
-    worker.communication_rating = avg("communication")
+    from services.ratings import apply_review_ratings
+    apply_review_ratings(worker, reviews)
 
 
 # ==== CSV ====
