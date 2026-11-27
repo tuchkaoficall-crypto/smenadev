@@ -33,7 +33,15 @@ class WorkerService:
         city: str,
         categories: list
     ) -> Worker:
-        """Создать профиль работника"""
+        """Создать профиль работника (или обновить, если он уже есть)"""
+        existing = await WorkerService.get_worker(session, user_id)
+        if existing:
+            existing.city = city
+            existing.categories = json.dumps(categories, ensure_ascii=False)
+            await session.commit()
+            await session.refresh(existing)
+            return existing
+        
         worker = Worker(
             user_id=user_id,
             city=city,
@@ -126,11 +134,16 @@ class WorkerService:
         )
         workers = result.scalars().all()
         
-        # Фильтруем по категории
+        # Фильтруем по категории.
+        # Пустой список категорий означает «Любая работа» — такие работники
+        # получают все вакансии своего города.
         filtered = []
         for worker in workers:
-            categories = json.loads(worker.categories)
-            if category in categories:
+            try:
+                categories = json.loads(worker.categories) if worker.categories else []
+            except (ValueError, TypeError):
+                categories = []
+            if not categories or category in categories:
                 filtered.append(worker)
         
         return filtered

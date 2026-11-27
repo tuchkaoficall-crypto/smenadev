@@ -27,13 +27,13 @@ class OrderService:
         requirements: str = None
     ) -> Order:
         """Создать новый заказ"""
-        from config import calculate_commission
+        from config import calculate_order_cost
         
-        # Расчет общей суммы оплаты работникам
-        total_worker_payment = payment_amount * workers_needed
-        
-        # Расчет комиссии на основе суммы
-        commission = calculate_commission(total_worker_payment)
+        # Тот же расчёт, что показывается работодателю в боте
+        cost = calculate_order_cost(
+            payment_type, payment_amount, shift_duration, workers_needed
+        )
+        commission = cost["commission_total"]
         
         order = Order(
             employer_id=employer_id,
@@ -48,7 +48,7 @@ class OrderService:
             payment_type=payment_type,
             payment_amount=payment_amount,
             commission=commission,
-            prepayment_amount=commission / 2,  # 50% предоплата
+            prepayment_amount=cost["prepayment"],
             status=OrderStatus.CREATED
         )
         session.add(order)
@@ -103,6 +103,21 @@ class OrderService:
                 and_(
                     Order.city == city,
                     Order.category == category,
+                    Order.status == OrderStatus.SEARCH_WORKERS
+                )
+            )
+            .order_by(Order.created_at.desc())
+        )
+        return result.scalars().all()
+    
+    @staticmethod
+    async def get_active_orders_by_city(session: AsyncSession, city: str):
+        """Получить все активные заказы в городе (для работников без категорий)"""
+        result = await session.execute(
+            select(Order)
+            .where(
+                and_(
+                    Order.city == city,
                     Order.status == OrderStatus.SEARCH_WORKERS
                 )
             )

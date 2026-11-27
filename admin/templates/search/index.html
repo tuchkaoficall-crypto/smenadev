@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+
+{% block title %}Поиск: {{ q }} — СМЕНА{% endblock %}
+
+{% block content %}
+<div class="page-head"><div><h1>Поиск «{{ q }}»</h1>
+    <div class="sub">Заказов: {{ orders|length }} · работодателей: {{ employers|length }} · работников: {{ workers|length }}</div></div></div>
+
+{% if not orders and not employers and not workers %}
+<div class="card"><div class="empty"><i class="bi bi-search"></i>Ничего не найдено. Попробуйте номер заказа (#12), телефон, @username или название компании.</div></div>
+{% endif %}
+
+{% if orders %}
+<div class="card mb-4"><div class="card-header">Заказы</div>
+    <table class="table table-hover align-middle"><tbody>
+    {% for o in orders %}
+    <tr data-href="{{ url_for('orders.detail', order_id=o.id) }}">
+        <td class="ps-3 fw-semibold">#{{ o.id }}</td><td>{{ o.category }}<div class="small text-body-secondary">{{ o.employer.company_name if o.employer else '' }}</div></td>
+        <td class="small">{{ o.address|truncate(50) }}</td><td class="small">{{ o.shift_date|dt('%d.%m.%Y %H:%M') }}</td><td>{{ m.order_badge(o.status) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody></table></div>
+{% endif %}
+
+{% if employers %}
+<div class="card mb-4"><div class="card-header">Работодатели</div>
+    <table class="table table-hover align-middle"><tbody>
+    {% for e in employers %}
+    <tr data-href="{{ url_for('employers.detail', employer_id=e.id) }}">
+        <td class="ps-3 fw-semibold">{{ e.company_name }}</td><td class="small">{{ e.contact_person }} · {{ e.contact_phone }}</td>
+        <td class="small">ИНН {{ e.inn or '—' }}</td><td>{{ m.employer_badge(e.status) }}</td>
+    </tr>
+    {% endfor %}
+    </tbody></table></div>
+{% endif %}
+
+{% if workers %}
+<div class="card"><div class="card-header">Работники</div>
+    <table class="table table-hover align-middle"><tbody>
+    {% for w in workers %}
+    <tr data-href="{{ url_for('workers.detail', worker_id=w.id) }}">
+        <td class="ps-3 fw-semibold">{{ w.user.full_name if w.user else w.user_id }}</td>
+        <td class="small">{{ '@' ~ w.user.username if w.user and w.user.username else '' }}</td>
+        <td class="small">{{ w.user.phone if w.user and w.user.phone else '' }}</td><td class="small">{{ w.city }}</td>
+        <td class="small">{{ w.completed_shifts }} смен</td>
+    </tr>
+    {% endfor %}
+    </tbody></table></div>
+{% endif %}
+{% endblock %}

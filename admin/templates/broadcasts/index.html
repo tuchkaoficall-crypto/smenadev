@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Рассылки — СМЕНА{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div><h1>Рассылки</h1><div class="sub">Сообщение через бота выбранной аудитории. Заблокированные пользователи исключаются автоматически.</div></div>
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-xl-7">
+        <div class="card">
+            <div class="card-header"><i class="bi bi-megaphone me-1"></i> Новая рассылка</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('broadcasts.send') }}" id="bcForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Аудитория</label>
+                            <select name="audience" class="form-select" id="bcAudience">
+                                {% for k, n in audiences.items() %}<option value="{{ k }}" {% if k == 'workers' %}selected{% endif %}>{{ n }}</option>{% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-4 worker-only">
+                            <label class="form-label">Город</label>
+                            <select name="city" class="form-select" id="bcCity"><option value="">Любой</option>
+                                {% for c in cities %}<option>{{ c }}</option>{% endfor %}</select>
+                        </div>
+                        <div class="col-md-4 worker-only">
+                            <label class="form-label">Категория</label>
+                            <select name="category" class="form-select" id="bcCategory"><option value="">Любая</option>
+                                {% for c in categories %}<option>{{ c }}</option>{% endfor %}</select>
+                        </div>
+                    </div>
+                    <label class="form-label d-flex justify-content-between">Текст сообщения <small class="text-body-secondary"><span id="bcLen">0</span> / {{ max_len }}</small></label>
+                    <textarea name="text" class="form-control mb-3" rows="7" maxlength="{{ max_len }}" id="bcText" required
+                              placeholder="Например: 🔥 Завтра много смен для грузчиков с оплатой от 3000 ₽ — заходите в бот!"></textarea>
+                    <div class="d-flex align-items-center gap-3">
+                        <button type="submit" class="btn btn-brand"><i class="bi bi-send"></i> Отправить</button>
+                        <span class="text-body-secondary">Получателей: <strong id="bcCount">…</strong></span>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-5">
+        <div class="card h-100">
+            <div class="card-header"><i class="bi bi-phone me-1"></i> Как увидит пользователь</div>
+            <div class="card-body">
+                <div class="tg-preview"><div class="tg-bubble" id="bcPreview">Текст появится здесь</div></div>
+                <p class="small text-body-secondary mt-3 mb-0">Отправка идёт в фоне, примерно 20 сообщений в секунду (лимит Telegram). Прогресс обновляется в таблице ниже.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header"><i class="bi bi-clock-history me-1"></i> История рассылок</div>
+    {% if broadcasts %}
+    <div class="table-responsive"><table class="table align-middle">
+        <thead><tr><th class="ps-3">№</th><th>Когда</th><th>Аудитория</th><th>Текст</th><th style="min-width:180px">Доставка</th><th>Статус</th></tr></thead>
+        <tbody>
+        {% for b in broadcasts %}
+        <tr data-bc="{{ b.id }}" data-status="{{ b.status }}">
+            <td class="ps-3 text-body-secondary">{{ b.id }}</td>
+            <td class="small text-nowrap">{{ b.created_at|dt('%d.%m.%Y %H:%M') }}<div class="text-body-secondary">{{ b.admin }}</div></td>
+            <td class="small">{{ audiences.get(b.audience, b.audience) }}</td>
+            <td class="small" style="max-width:340px"><div class="text-truncate">{{ b.text }}</div></td>
+            <td>
+                <div class="small num"><span class="bc-sent">{{ b.sent }}</span> из {{ b.total }}{% if b.failed %} · <span class="text-danger">{{ b.failed }} ошибок</span>{% endif %}</div>
+                <div class="progress progress-thin"><div class="progress-bar bg-success bc-bar" style="width: {{ ((b.sent / b.total * 100) if b.total else 0)|round }}%"></div></div>
+            </td>
+            <td class="bc-status">{% if b.status == 'done' %}<span class="badge text-bg-success">Готово</span>{% elif b.status == 'running' %}<span class="badge text-bg-primary">Идёт</span>{% elif b.status == 'pending' %}<span class="badge text-bg-secondary">В очереди</span>{% else %}<span class="badge text-bg-danger">{{ b.status }}</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody></table></div>
+    {% else %}<div class="empty"><i class="bi bi-megaphone"></i>Рассылок ещё не было</div>{% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+    const aud = document.getElementById('bcAudience'), city = document.getElementById('bcCity'),
+          cat = document.getElementById('bcCategory'), text = document.getElementById('bcText'),
+          count = document.getElementById('bcCount'), prev = document.getElementById('bcPreview'),
+          len = document.getElementById('bcLen'), form = document.getElementById('bcForm');
+    let n = 0;
+    function refresh() {
+        const emp = aud.value === 'employers';
+        document.querySelectorAll('.worker-only').forEach(el => el.style.display = emp ? 'none' : '');
+        const p = new URLSearchParams({audience: aud.value, city: emp ? '' : city.value, category: emp ? '' : cat.value});
+        fetch('{{ url_for("broadcasts.count") }}?' + p).then(r => r.json()).then(d => { n = d.count; count.textContent = n; });
+    }
+    [aud, city, cat].forEach(el => el.addEventListener('change', refresh));
+    text.addEventListener('input', function () {
+        len.textContent = text.value.length;
+        prev.textContent = text.value || 'Текст появится здесь';
+    });
+    form.addEventListener('submit', function (e) {
+        if (!confirm('Отправить сообщение ' + n + ' получателям? Отменить рассылку после запуска нельзя.')) e.preventDefault();
+    });
+    refresh();
+
+    function poll() {
+        const rows = document.querySelectorAll('tr[data-bc][data-status="running"], tr[data-bc][data-status="pending"]');
+        if (!rows.length) return;
+        rows.forEach(row => {
+            fetch('{{ url_for("broadcasts.index") }}' + row.dataset.bc + '/status').then(r => r.json()).then(d => {
+                row.querySelector('.bc-sent').textContent = d.sent;
+                row.querySelector('.bc-bar').style.width = (d.total ? d.sent / d.total * 100 : 0) + '%';
+                row.dataset.status = d.status;
+                if (d.status === 'done') row.querySelector('.bc-status').innerHTML = '<span class="badge text-bg-success">Готово</span>';
+            });
+        });
+        setTimeout(poll, 2000);
+    }
+    poll();
+})();
+</script>
+{% endblock %}

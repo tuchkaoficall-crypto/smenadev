@@ -32,6 +32,7 @@ class CreateOrder(StatesGroup):
     city = State()
     address = State()
     shift_date = State()
+    shift_time = State()
     shift_duration = State()
     workers_needed = State()
     payment_type = State()
@@ -39,3 +40,19 @@ class CreateOrder(StatesGroup):
     description = State()
     requirements = State()
     confirmation = State()
+
+
+class RateWorker(StatesGroup):
+    """Оценка работника работодателем"""
+    rating = State()
+    comment = State()
+
+
+class CheckIn(StatesGroup):
+    """Отметка «я на месте»: ждём геолокацию"""
+    location = State()
+
+
+class DocUpload(StatesGroup):
+    """Загрузка документа для проверки"""
+    file = State()

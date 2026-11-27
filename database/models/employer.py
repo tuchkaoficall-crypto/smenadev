@@ -33,7 +33,7 @@ class Employer(Base):
     approved_at = Column(DateTime, nullable=True)
     
     # Relationships
-    user = relationship("User", backref="employer_profile", foreign_keys=[user_id])
+    user = relationship("User", backref="employer_profile", foreign_keys=[user_id], lazy="selectin")
     
     def __repr__(self):
         return f"<Employer {self.company_name} ({self.status})>"

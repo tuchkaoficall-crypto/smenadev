@@ -1,188 +1,142 @@
 {% extends "base.html" %}
+{% import "_macros.html" as m with context %}
 
-{% block title %}{{ employer.company_name }} - СМЕНА{% endblock %}
+{% block title %}{{ employer.company_name }} — СМЕНА{% endblock %}
 
 {% block content %}
 <nav aria-label="breadcrumb">
-    <ol class="breadcrumb">
-        <li class="breadcrumb-item"><a href="{{ url_for('dashboard.index') }}">Дашборд</a></li>
+    <ol class="breadcrumb small">
         <li class="breadcrumb-item"><a href="{{ url_for('employers.index') }}">Работодатели</a></li>
         <li class="breadcrumb-item active">{{ employer.company_name }}</li>
     </ol>
 </nav>
 
-<div class="row">
-    <div class="col-md-8">
-        <div class="card mb-4">
-            <div class="card-header">
-                <h5><i class="bi bi-building"></i> Информация о компании</h5>
-            </div>
-            <div class="card-body">
-                <table class="table">
-                    <tr>
-                        <th width="30%">ID:</th>
-                        <td>{{ employer.id }}</td>
-                    </tr>
-                    <tr>
-                        <th>Название компании:</th>
-                        <td><strong>{{ employer.company_name }}</strong></td>
-                    </tr>
-                    <tr>
-                        <th>Описание:</th>
-                        <td>{{ employer.company_description or '—' }}</td>
-                    </tr>
-                    <tr>
-                        <th>ИНН:</th>
-                        <td>{{ employer.inn or '—' }}</td>
-                    </tr>
-                    <tr>
-                        <th>Контактное лицо:</th>
-                        <td>{{ employer.contact_person }}</td>
-                    </tr>
-                    <tr>
-                        <th>Телефон:</th>
-                        <td>{{ employer.contact_phone }}</td>
-                    </tr>
-                    <tr>
-                        <th>Email:</th>
-                        <td>{{ employer.contact_email or '—' }}</td>
-                    </tr>
-                    <tr>
-                        <th>Telegram ID:</th>
-                        <td>{{ employer.user_id }}</td>
-                    </tr>
-                    <tr>
-                        <th>Telegram:</th>
-                        <td>
-                            {% if employer.user.username %}
-                            <a href="https://t.me/{{ employer.user.username }}" target="_blank">@{{ employer.user.username }}</a>
-                            {% else %}—{% endif %}
-                        </td>
-                    </tr>
-                </table>
-            </div>
-        </div>
-        
-        <!-- Заказы -->
-        <div class="card">
-            <div class="card-header">
-                <h5><i class="bi bi-clipboard-check"></i> Заказы ({{ orders|length }})</h5>
-            </div>
-            <div class="card-body">
-                {% if orders %}
-                <div class="list-group">
-                    {% for order in orders %}
-                    <a href="{{ url_for('orders.detail', order_id=order.id) }}" class="list-group-item list-group-item-action">
-                        <div class="d-flex w-100 justify-content-between">
-                            <h6 class="mb-1">Заказ #{{ order.id }} - {{ order.category }}</h6>
-                            <small>{{ order.created_at.strftime('%d.%m.%Y') }}</small>
-                        </div>
-                        <p class="mb-1">{{ order.city }}, {{ order.address }}</p>
-                        <small>Статус: {{ order.status }}</small>
-                    </a>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <p class="text-muted">Пока нет заказов</p>
-                {% endif %}
-            </div>
+<div class="page-head">
+    <div class="d-flex align-items-center gap-3">
+        <span class="avatar lg">{{ employer.company_name[:1] }}</span>
+        <div>
+            <h1>{{ employer.company_name }} {{ m.employer_badge(employer.status) }}
+                {% if employer.user and employer.user.is_blocked %}<span class="badge text-bg-dark">аккаунт заблокирован</span>{% endif %}</h1>
+            <div class="sub">Зарегистрирован {{ employer.created_at|dt('%d.%m.%Y') }}{% if employer.approved_at %} · одобрен {{ employer.approved_at|dt('%d.%m.%Y') }}{% endif %}</div>
         </div>
     </div>
-    
-    <div class="col-md-4">
+    <div class="d-flex gap-2 flex-wrap">
+        {% if employer.status in ['pending', 'rejected'] %}
+        <form method="POST" action="{{ url_for('employers.approve', employer_id=employer.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-success"><i class="bi bi-check-circle"></i> Одобрить</button>
+        </form>
+        {% endif %}
+        {% if employer.status == 'pending' %}
+        <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#rejectModal"><i class="bi bi-x-circle"></i> Отклонить</button>
+        {% endif %}
+        {% if employer.status == 'blocked' %}
+        <form method="POST" action="{{ url_for('employers.unblock', employer_id=employer.id) }}" data-confirm="Разблокировать работодателя?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-success"><i class="bi bi-unlock"></i> Разблокировать</button>
+        </form>
+        {% else %}
+        <form method="POST" action="{{ url_for('employers.block', employer_id=employer.id) }}" data-confirm="Заблокировать работодателя? Он потеряет доступ к боту.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn btn-outline-dark"><i class="bi bi-slash-circle"></i> Заблокировать</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+{% if employer.rejection_reason and employer.status == 'rejected' %}
+<div class="alert alert-warning"><strong>Причина отклонения:</strong> {{ employer.rejection_reason }}</div>
+{% endif %}
+
+<div class="kpi-grid">
+    {{ m.kpi('bi-clipboard-check', 'Заказов', stats.orders, stats.active ~ ' в работе · ' ~ stats.cancelled ~ ' отмен', None, 'primary') }}
+    {{ m.kpi('bi-check2-all', 'Закрыто', stats.done, None, None, 'success') }}
+    {{ m.kpi('bi-cash-stack', 'Оборот', stats.gmv|money, None, None, 'info') }}
+    {{ m.kpi('bi-piggy-bank', 'Принёс комиссии', stats.commission|money, None, None, 'purple') }}
+</div>
+
+<div class="row g-4">
+    <div class="col-xl-8">
         <div class="card mb-4">
-            <div class="card-header">
-                <h5><i class="bi bi-shield-check"></i> Статус</h5>
+            <div class="card-header d-flex justify-content-between">
+                <span><i class="bi bi-clipboard-check me-1"></i> Заказы ({{ orders|length }})</span>
+                {% if orders %}<a class="small" href="{{ url_for('orders.index', employer_id=employer.id) }}">открыть в списке</a>{% endif %}
             </div>
+            {% if orders %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead><tr><th class="ps-3">№</th><th>Категория</th><th>Смена</th><th>Набор</th><th class="text-end">Комиссия</th><th>Статус</th></tr></thead>
+                    <tbody>
+                    {% for o in orders %}
+                    {% set conf = o.responses|selectattr('status', 'in', ['confirmed', 'completed'])|list|length %}
+                    <tr data-href="{{ url_for('orders.detail', order_id=o.id) }}">
+                        <td class="ps-3 fw-semibold">#{{ o.id }}</td>
+                        <td>{{ o.category }}<div class="small text-body-secondary">{{ o.address|truncate(40) }}</div></td>
+                        <td class="small">{{ o.shift_date|dt('%d.%m.%Y %H:%M') }}</td>
+                        <td class="num small">{{ conf }} / {{ o.workers_needed }}</td>
+                        <td class="text-end num">{{ (o.commission or 0)|money }}</td>
+                        <td>{{ m.order_badge(o.status) }}</td>
+                    </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}<div class="empty"><i class="bi bi-inbox"></i>Заказов пока нет</div>{% endif %}
+        </div>
+
+        {% if employer.reviews %}
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-star me-1"></i> Оставленные отзывы ({{ employer.reviews|length }})</div>
             <div class="card-body">
-                <div class="mb-3">
-                    <strong>Текущий статус:</strong><br>
-                    <span class="badge 
-                        {% if employer.status == 'pending' %}bg-warning
-                        {% elif employer.status == 'approved' %}bg-success
-                        {% elif employer.status == 'rejected' %}bg-danger
-                        {% elif employer.status == 'blocked' %}bg-dark
-                        {% else %}bg-secondary{% endif %} fs-6">
-                        {{ status_names.get(employer.status, employer.status) }}
-                    </span>
+                {% for r in employer.reviews|sort(attribute='created_at', reverse=True) %}
+                <div class="border-bottom pb-2 mb-2 small">
+                    {{ m.stars(r.rating) }} → <a href="{{ url_for('workers.detail', worker_id=r.worker_id) }}">{{ r.worker.user.full_name if r.worker and r.worker.user else r.worker_id }}</a>
+                    · заказ #{{ r.order_id }} {% if r.is_hidden %}<span class="badge text-bg-secondary">скрыт</span>{% endif %}
+                    {% if r.comment %}<div>{{ r.comment }}</div>{% endif %}
                 </div>
-                
-                {% if employer.rejection_reason %}
-                <div class="alert alert-warning">
-                    <strong>Причина отклонения:</strong><br>
-                    {{ employer.rejection_reason }}
-                </div>
-                {% endif %}
-                
-                <div class="d-grid gap-2">
-                    {% if employer.status == 'pending' %}
-                    <form method="POST" action="{{ url_for('employers.approve', employer_id=employer.id) }}">
-                        <button type="submit" class="btn btn-success w-100">
-                            <i class="bi bi-check-circle"></i> Одобрить
-                        </button>
-                    </form>
-                    <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#rejectModal">
-                        <i class="bi bi-x-circle"></i> Отклонить
-                    </button>
-                    {% elif employer.status == 'approved' %}
-                    <form method="POST" action="{{ url_for('employers.block', employer_id=employer.id) }}">
-                        <button type="submit" class="btn btn-danger w-100">
-                            <i class="bi bi-ban"></i> Заблокировать
-                        </button>
-                    </form>
-                    {% elif employer.status == 'rejected' %}
-                    <form method="POST" action="{{ url_for('employers.approve', employer_id=employer.id) }}">
-                        <button type="submit" class="btn btn-success w-100">
-                            <i class="bi bi-check-circle"></i> Одобрить
-                        </button>
-                    </form>
-                    {% endif %}
-                </div>
+                {% endfor %}
             </div>
         </div>
-        
-        <div class="card">
-            <div class="card-header">
-                <h5><i class="bi bi-info-circle"></i> Дополнительно</h5>
-            </div>
+        {% endif %}
+
+        {{ m.history_card(history, url_for('employers.note', employer_id=employer.id)) }}
+    </div>
+
+    <div class="col-xl-4">
+        <div class="card mb-4">
+            <div class="card-header"><i class="bi bi-person-vcard me-1"></i> Контакты</div>
             <div class="card-body">
-                <p><small class="text-muted">
-                    <strong>Дата регистрации:</strong><br>
-                    {{ employer.created_at.strftime('%d.%m.%Y %H:%M') }}
-                </small></p>
-                
-                {% if employer.approved_at %}
-                <p><small class="text-muted">
-                    <strong>Дата одобрения:</strong><br>
-                    {{ employer.approved_at.strftime('%d.%m.%Y %H:%M') }}
-                </small></p>
-                {% endif %}
+                <dl class="kv" style="grid-template-columns: 120px 1fr">
+                    <dt>Контакт</dt><dd>{{ employer.contact_person }}</dd>
+                    <dt>Телефон</dt><dd><a href="tel:{{ employer.contact_phone }}">{{ employer.contact_phone }}</a></dd>
+                    <dt>Email</dt><dd>{% if employer.contact_email %}<a href="mailto:{{ employer.contact_email }}">{{ employer.contact_email }}</a>{% else %}—{% endif %}</dd>
+                    <dt>ИНН</dt><dd>{{ employer.inn or '—' }}</dd>
+                    <dt>Telegram</dt><dd>{% if employer.user and employer.user.username %}<a href="https://t.me/{{ employer.user.username }}" target="_blank" rel="noopener">@{{ employer.user.username }}</a>{% else %}—{% endif %}
+                        <div class="small text-body-secondary">ID {{ employer.user_id }}</div></dd>
+                </dl>
             </div>
+        </div>
+        <div class="card">
+            <div class="card-header"><i class="bi bi-info-circle me-1"></i> О компании</div>
+            <div class="card-body small" style="white-space: pre-wrap">{{ employer.company_description or 'Описание не заполнено' }}</div>
         </div>
     </div>
 </div>
 
-<!-- Modal для отклонения -->
 <div class="modal fade" id="rejectModal" tabindex="-1">
     <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Отклонить работодателя</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <form class="modal-content" method="POST" action="{{ url_for('employers.reject', employer_id=employer.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="modal-header"><h5 class="modal-title">Отклонить анкету</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">
+                <label class="form-label">Причина (увидит работодатель)</label>
+                <textarea class="form-control" name="reason" rows="3" required></textarea>
             </div>
-            <form method="POST" action="{{ url_for('employers.reject', employer_id=employer.id) }}">
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label for="reason" class="form-label">Причина отклонения:</label>
-                        <textarea class="form-control" id="reason" name="reason" rows="3" required></textarea>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
-                    <button type="submit" class="btn btn-danger">Отклонить</button>
-                </div>
-            </form>
-        </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="submit" class="btn btn-danger">Отклонить</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}

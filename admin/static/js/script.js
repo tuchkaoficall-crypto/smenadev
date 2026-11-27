@@ -1,74 +1,59 @@
-// Кастомные скрипты для админ-панели СМЕНА
+// Скрипты админ-панели СМЕНА
 
-// Автоматическое скрытие уведомлений
-document.addEventListener('DOMContentLoaded', function() {
-    // Автозакрытие алертов через 5 секунд
-    const alerts = document.querySelectorAll('.alert:not(.alert-important)');
-    alerts.forEach(function(alert) {
-        setTimeout(function() {
-            const bsAlert = new bootstrap.Alert(alert);
-            bsAlert.close();
-        }, 5000);
+document.addEventListener('DOMContentLoaded', function () {
+    // Автозакрытие уведомлений
+    document.querySelectorAll('.toast-stack .alert').forEach(function (alert) {
+        setTimeout(function () { bootstrap.Alert.getOrCreateInstance(alert).close(); }, 6000);
     });
-    
-    // Подтверждение удаления/блокировки
-    const dangerButtons = document.querySelectorAll('.btn-danger, .btn-warning');
-    dangerButtons.forEach(function(button) {
-        button.addEventListener('click', function(e) {
-            if (!confirm('Вы уверены?')) {
-                e.preventDefault();
-                return false;
-            }
+
+    // Подтверждение действий: <form data-confirm="Текст"> или <button data-confirm="...">
+    document.querySelectorAll('form[data-confirm]').forEach(function (form) {
+        form.addEventListener('submit', function (e) {
+            if (!confirm(form.dataset.confirm)) e.preventDefault();
         });
     });
-});
-
-// Поиск в таблицах
-function searchTable(inputId, tableId) {
-    const input = document.getElementById(inputId);
-    const filter = input.value.toUpperCase();
-    const table = document.getElementById(tableId);
-    const tr = table.getElementsByTagName('tr');
-    
-    for (let i = 1; i < tr.length; i++) {
-        const td = tr[i].getElementsByTagName('td');
-        let found = false;
-        
-        for (let j = 0; j < td.length; j++) {
-            if (td[j]) {
-                const txtValue = td[j].textContent || td[j].innerText;
-                if (txtValue.toUpperCase().indexOf(filter) > -1) {
-                    found = true;
-                    break;
-                }
-            }
-        }
-        
-        tr[i].style.display = found ? '' : 'none';
-    }
-}
-
-// Копирование в буфер обмена
-function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(function() {
-        // Показать уведомление
-        const toast = document.createElement('div');
-        toast.className = 'toast align-items-center text-white bg-success border-0';
-        toast.setAttribute('role', 'alert');
-        toast.innerHTML = `
-            <div class="d-flex">
-                <div class="toast-body">
-                    Скопировано в буфер обмена
-                </div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
-            </div>
-        `;
-        document.body.appendChild(toast);
-        const bsToast = new bootstrap.Toast(toast);
-        bsToast.show();
-        
-        setTimeout(function() {
-            toast.remove();
-        }, 3000);
+    document.querySelectorAll('button[data-confirm], a[data-confirm]').forEach(function (el) {
+        el.addEventListener('click', function (e) {
+            if (!confirm(el.dataset.confirm)) e.preventDefault();
+        });
     });
-}
+
+    // Клик по строке таблицы открывает карточку
+    document.querySelectorAll('tr[data-href]').forEach(function (row) {
+        row.addEventListener('click', function (e) {
+            if (e.target.closest('a, button, form, input, select, label')) return;
+            window.location = row.dataset.href;
+        });
+    });
+
+    // Тема
+    var toggle = document.getElementById('themeToggle');
+    if (toggle) {
+        var setIcon = function () {
+            var dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+            toggle.innerHTML = dark ? '<i class="bi bi-sun"></i>' : '<i class="bi bi-moon-stars"></i>';
+        };
+        setIcon();
+        toggle.addEventListener('click', function () {
+            var next = document.documentElement.getAttribute('data-bs-theme') === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-bs-theme', next);
+            localStorage.setItem('smena-theme', next);
+            setIcon();
+            document.dispatchEvent(new Event('themechange'));
+        });
+    }
+
+    // «/» — фокус на глобальный поиск
+    document.addEventListener('keydown', function (e) {
+        var tag = (e.target.tagName || '').toLowerCase();
+        if (e.key === '/' && tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
+            var s = document.getElementById('globalSearch');
+            if (s) { e.preventDefault(); s.focus(); }
+        }
+    });
+
+    // Автоотправка фильтров при смене select
+    document.querySelectorAll('form.auto-submit select').forEach(function (sel) {
+        sel.addEventListener('change', function () { sel.form.submit(); });
+    });
+});

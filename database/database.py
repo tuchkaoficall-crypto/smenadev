@@ -39,6 +39,7 @@ async def get_session() -> AsyncSession:
 
 
 async def init_db():
-    """Инициализация базы данных"""
+    """Инициализация базы данных: новые таблицы и колонки добавляются, данные не трогаются"""
+    from database.migrate import upgrade_schema
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(upgrade_schema)

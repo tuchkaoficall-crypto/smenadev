@@ -20,8 +20,13 @@ def login():
         
         if user:
             login_user(user)
+            from admin import services
+            services.log_action('login', summary=request.remote_addr)
             next_page = request.args.get('next')
-            return redirect(next_page or url_for('dashboard.index'))
+            # Разрешаем только относительные пути внутри панели (защита от open redirect)
+            if not next_page or not next_page.startswith('/') or next_page.startswith('//') or '\\' in next_page:
+                next_page = url_for('dashboard.index')
+            return redirect(next_page)
         
         flash('Неверное имя пользователя или пароль', 'danger')
     

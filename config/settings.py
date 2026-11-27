@@ -22,9 +22,11 @@ ADMIN_CONTACT = "@smena_adm"  # Контакт администратора
 USE_SQLITE = os.getenv("USE_SQLITE", "True").lower() == "true"
 
 if USE_SQLITE:
-    # SQLite для локальной разработки
-    DATABASE_URL = f"sqlite+aiosqlite:///{BASE_DIR}/smena_db.sqlite"
-    SYNC_DATABASE_URL = f"sqlite:///{BASE_DIR}/smena_db.sqlite"
+    # SQLite для локальной разработки. SQLITE_PATH позволяет указать другой файл
+    # (например, отдельную базу для тестов), по умолчанию smena_db.sqlite в корне проекта.
+    SQLITE_PATH = os.getenv("SQLITE_PATH") or str(BASE_DIR / "smena_db.sqlite")
+    DATABASE_URL = f"sqlite+aiosqlite:///{SQLITE_PATH}"
+    SYNC_DATABASE_URL = f"sqlite:///{SQLITE_PATH}"
 else:
     # PostgreSQL для продакшена
     DB_CONFIG = {
@@ -90,13 +92,45 @@ def calculate_commission(shift_amount: float) -> float:
     else:
         return shift_amount * (BASE_COMMISSION_PERCENT / 100)
 
+def calculate_order_cost(
+    payment_type: str,
+    payment_amount: float,
+    shift_duration: int,
+    workers_needed: int,
+) -> dict:
+    """
+    Единый расчёт стоимости заявки (используется и в боте, и в OrderService,
+    чтобы работодателю показывалась та же сумма, что пишется в БД).
+
+    Комиссия считается от оплаты одного работника за смену
+    (для почасовой оплаты: ставка * часы), затем умножается на число работников.
+    """
+    if payment_type == "per_hour":
+        shift_amount = payment_amount * shift_duration
+    else:
+        shift_amount = payment_amount
+
+    commission_per_worker = calculate_commission(shift_amount)
+    commission_total = commission_per_worker * workers_needed
+    total_per_worker = shift_amount + commission_per_worker
+
+    return {
+        "shift_amount": shift_amount,
+        "commission_per_worker": commission_per_worker,
+        "commission_total": commission_total,
+        "total_per_worker": total_per_worker,
+        "total_cost": total_per_worker * workers_needed,
+        "prepayment": commission_total * PREPAYMENT_PERCENT / 100,
+    }
+
+
 # Логи
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
 # Статические файлы
 STATIC_DIR = BASE_DIR / "admin" / "static"
-ASSETS_DIR = Path(os.getenv("ASSETS_DIR", "C:\\Users\\tuchk\\Downloads\\smenaassets"))
+ASSETS_DIR = Path(os.getenv("ASSETS_DIR", str(BASE_DIR / "assets")))
 
 # Города (для первого запуска)
 AVAILABLE_CITIES = [
@@ -147,6 +181,8 @@ class ResponseStatus:
     CONFIRMED = "confirmed"       # Подтверждён
     REJECTED = "rejected"         # Отклонён
     COMPLETED = "completed"       # Смена завершена
+    WITHDRAWN = "withdrawn"       # Работник сам отказался
+    NO_SHOW = "no_show"           # Не вышел на смену (отмечает администратор)
 
 RESPONSE_STATUS_NAMES = {
     ResponseStatus.PENDING: "Ожидает рассмотрения",
@@ -154,6 +190,53 @@ RESPONSE_STATUS_NAMES = {
     ResponseStatus.CONFIRMED: "Подтверждён",
     ResponseStatus.REJECTED: "Отклонён",
     ResponseStatus.COMPLETED: "Смена завершена",
+    ResponseStatus.WITHDRAWN: "Отказался",
+    ResponseStatus.NO_SHOW: "Не вышел на смену",
+}
+
+# ==== Отметка «я на месте» ====
+# Кнопку «📍 Я на месте» присылаем за CHECKIN_PROMPT_MINUTES до начала смены,
+# опоздание считается после CHECKIN_GRACE_MINUTES от начала.
+CHECKIN_PROMPT_MINUTES = int(os.getenv("CHECKIN_PROMPT_MINUTES", 30))
+CHECKIN_GRACE_MINUTES = int(os.getenv("CHECKIN_GRACE_MINUTES", 15))
+# Если у заказа задана точка на карте: дальше этого расстояния отметка помечается «далеко»
+CHECKIN_MAX_DISTANCE_M = int(os.getenv("CHECKIN_MAX_DISTANCE_M", 500))
+
+# ==== Надёжность работников ====
+PENALTY_POINTS = {
+    "late_cancel": 2,       # отказ от подтверждённой смены менее чем за 24 ч
+    "very_late_cancel": 3,  # отказ менее чем за 3 ч
+    "no_show": 5,           # не вышел на смену
+    "late_checkin": 1,      # отметился «на месте» с опозданием
+    "manual": 1,            # вручную из админ-панели (баллы задаёт админ)
+}
+PENALTY_NAMES = {
+    "late_cancel": "Поздний отказ (< 24 ч)",
+    "very_late_cancel": "Очень поздний отказ (< 3 ч)",
+    "no_show": "Неявка на смену",
+    "late_checkin": "Опоздание",
+    "manual": "Штраф администратора",
+}
+PENALTY_WINDOW_DAYS = int(os.getenv("PENALTY_WINDOW_DAYS", 90))      # баллы «сгорают» через N дней
+PENALTY_RESTRICT_POINTS = int(os.getenv("PENALTY_RESTRICT_POINTS", 10))  # от N баллов — без вакансий
+# Надёжные работники получают вакансию сразу, остальные — через N минут (0 — всем сразу)
+PRIORITY_DELAY_MINUTES = int(os.getenv("PRIORITY_DELAY_MINUTES", 15))
+
+# Документы для проверки личности
+DOCUMENT_TYPES = {
+    "passport": "Паспорт",
+    "medbook": "Медицинская книжка",
+    "other": "Другой документ",
+}
+DOCUMENT_STATUS_NAMES = {"pending": "На проверке", "approved": "Подтверждён", "rejected": "Отклонён"}
+
+# ==== Реферальная программа ====
+REFERRAL_BONUS = float(os.getenv("REFERRAL_BONUS", 300))  # ₽ пригласившему за активного друга
+REFERRAL_STATUS_NAMES = {
+    "invited": "Зарегистрировался",
+    "qualified": "Бонус начислен",
+    "paid": "Бонус выплачен",
+    "rejected": "Отклонён",
 }
 
 # Роли пользователей

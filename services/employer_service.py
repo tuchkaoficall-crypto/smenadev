@@ -38,7 +38,26 @@ class EmployerService:
         inn: str = None,
         contact_email: str = None
     ) -> Employer:
-        """Создать профиль работодателя"""
+        """Создать профиль работодателя.
+        
+        Если профиль уже есть (например, анкета была отклонена и заполняется
+        заново), обновляем его и снова отправляем на проверку, иначе
+        user_id (unique) вызовет IntegrityError.
+        """
+        existing = await EmployerService.get_employer(session, user_id)
+        if existing:
+            existing.company_name = company_name
+            existing.contact_person = contact_person
+            existing.contact_phone = contact_phone
+            existing.company_description = company_description
+            existing.inn = inn
+            existing.contact_email = contact_email
+            existing.status = EmployerStatus.PENDING
+            existing.rejection_reason = None
+            await session.commit()
+            await session.refresh(existing)
+            return existing
+        
         employer = Employer(
             user_id=user_id,
             company_name=company_name,

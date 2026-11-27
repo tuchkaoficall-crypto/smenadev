@@ -32,12 +32,12 @@ def get_role_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_cities_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура выбора города"""
-    from config import AVAILABLE_CITIES
+def get_cities_keyboard(prefix: str = "city_") -> InlineKeyboardMarkup:
+    """Клавиатура выбора города (список городов редактируется в админ-панели)"""
+    from services.cities import active_cities
     builder = InlineKeyboardBuilder()
-    for city in AVAILABLE_CITIES:
-        builder.button(text=city, callback_data=f"city_{city}")
+    for city in active_cities():
+        builder.button(text=city, callback_data=f"{prefix}{city}")
     builder.adjust(2)
     return builder.as_markup()
 
@@ -232,6 +232,37 @@ def get_date_keyboard() -> InlineKeyboardMarkup:
         )
     
     builder.adjust(2)
+    return builder.as_markup()
+
+
+def get_time_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора времени начала смены"""
+    builder = InlineKeyboardBuilder()
+    for hour in range(6, 24):
+        builder.button(
+            text=f"{hour:02d}:00",
+            callback_data=f"time_{hour:02d}-00"
+        )
+    builder.adjust(4)
+    return builder.as_markup()
+
+
+def get_rating_stars_keyboard(order_id: int, worker_id: int) -> InlineKeyboardMarkup:
+    """Выбор оценки 1-5 для работника"""
+    builder = InlineKeyboardBuilder()
+    for i in range(1, 6):
+        builder.button(
+            text="⭐️" * i,
+            callback_data=f"rate:{order_id}:{worker_id}:{i}"
+        )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_skip_comment_keyboard() -> InlineKeyboardMarkup:
+    """Кнопка пропуска комментария к отзыву"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⏭ Без комментария", callback_data="rate_skip_comment")
     return builder.as_markup()
 
 

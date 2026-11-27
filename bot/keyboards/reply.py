@@ -23,10 +23,10 @@ def get_phone_keyboard() -> ReplyKeyboardMarkup:
 
 def get_cities_keyboard() -> ReplyKeyboardMarkup:
     """Клавиатура выбора города"""
-    from config import AVAILABLE_CITIES
-    
+    from services.cities import active_cities
+
     builder = ReplyKeyboardBuilder()
-    for city in AVAILABLE_CITIES:
+    for city in active_cities():
         builder.button(text=city)
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
@@ -50,6 +50,7 @@ def get_employer_menu() -> ReplyKeyboardMarkup:
     builder.button(text="➕ Создать заявку")
     builder.button(text="📋 Мои заявки")
     builder.button(text="👔 Мой профиль")
+    builder.button(text="🎁 Пригласить друга")
     builder.button(text="❓ Помощь")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
@@ -61,6 +62,7 @@ def get_worker_menu() -> ReplyKeyboardMarkup:
     builder.button(text="🔍 Найти работу")
     builder.button(text="📝 Мои отклики")
     builder.button(text="👤 Мой профиль")
+    builder.button(text="🎁 Пригласить друга")
     builder.button(text="❓ Помощь")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)

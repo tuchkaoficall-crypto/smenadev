@@ -1,0 +1,35 @@
+# Версии проверены на Python 3.14 (Windows), у всех пакетов есть готовые wheel-файлы.
+# Обновлено 2026-11-27. Подробности в BUGFIXES.md (раздел «Обновление зависимостей»).
+
+# Telegram Bot
+aiogram==3.34.0
+aiohttp==3.14.5
+python-dotenv==1.2.4
+
+# Database
+# [asyncio] обязателен: начиная с SQLAlchemy 2.1 greenlet не ставится автоматически,
+# без него create_async_engine падает.
+sqlalchemy[asyncio]==2.1.9
+aiosqlite==0.22.1
+asyncpg==0.32.0
+alembic==1.20.1
+
+# Admin Panel
+flask==3.1.3
+flask-login==0.6.3
+flask-sqlalchemy==3.1.1
+werkzeug==3.1.9
+# gunicorn работает только на Linux/macOS (для деплоя), на Windows не ставится
+gunicorn==27.0.1; sys_platform != "win32"
+
+# Utilities
+python-dateutil==4.0.0
+pytz==2026.6
+tzdata==2026.6
+pydantic==2.14.4
+
+# Development
+pytest==9.2.0
+pytest-asyncio==1.5.0
+black==26.10.1
+flake8==7.5.0
